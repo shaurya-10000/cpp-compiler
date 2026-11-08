@@ -26,10 +26,21 @@ jobs:
 
       - name: Smoke test (Linux)
         if: runner.os == 'Linux'
-        run: echo 'int main() { return 0; }' | ./build/minicc
+        run: |
+          echo 'int main() { return 0; }' > test.cpp
+          ./build/minicc test.cpp
 
       - name: Smoke test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          "int main() { return 0; }" | .\build\Release\minicc.exe
+          "int main() { return 0; }" | Out-File -Encoding utf8 test.cpp
+          # Check both possible binary locations (MSBuild vs Makefiles/Ninja)
+          if (Test-Path "build\Release\minicc.exe") {
+            .\build\Release\minicc.exe test.cpp
+          } elseif (Test-Path "build\minicc.exe") {
+            .\build\minicc.exe test.cpp
+          } else {
+            Write-Error "Could not find minicc.exe in build directory"
+            exit 1
+          }
