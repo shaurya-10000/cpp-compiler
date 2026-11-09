@@ -92,7 +92,17 @@ std::vector<Token> Lexer::tokenize() {
                 case '*': mk(Tok::STAR); break;
                 case '/': mk(Tok::SLASH); break;
                 case '%': mk(Tok::PERCENT); break;
-                case '=': mk(Tok::ASSIGN); break;
+                case '=': mk(match('=') ? Tok::EQ : Tok::ASSIGN); break;
+                case '!': mk(match('=') ? Tok::NE : Tok::NOT); break;
+                case '<': mk(match('=') ? Tok::LE : Tok::LT); break;
+                case '>': mk(match('=') ? Tok::GE : Tok::GT); break;
+                case '~': mk(Tok::TILDE); break;
+                case '&':
+                    if (!match('&')) throw std::runtime_error("unexpected '&' at line " + std::to_string(l));
+                    mk(Tok::AND); break;
+                case '|':
+                    if (!match('|')) throw std::runtime_error("unexpected '|' at line " + std::to_string(l));
+                    mk(Tok::OR); break;
                 case '(': mk(Tok::LPAREN); break;
                 case ')': mk(Tok::RPAREN); break;
                 case '{': mk(Tok::LBRACE); break;

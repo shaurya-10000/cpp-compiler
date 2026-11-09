@@ -322,7 +322,7 @@ ExprPtr Parser::parse_primary() {
         case Tok::STRING_LIT: {
             auto s = std::make_unique<StringLit>(); s->line = line; s->value = t.text;
             advance(); return s;
-        }        default: error("expected expression");
+        }        default: error("expected expression"); return nullptr;
     }
 }
 

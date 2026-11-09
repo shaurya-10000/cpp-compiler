@@ -30,6 +30,7 @@ std::string Codegen::add_string(const std::string& s) {
 }
 
 void Codegen::generate(Program& program) {
+    out_ << ".section .note.GNU-stack,\"\",@progbits\n";
     out_ << ".text\n";
     
     // --- Built-in: print_str(char* buf, long len) ---
@@ -238,7 +239,8 @@ void Codegen::gen_expr(Expr* e) {
     } else if (auto* u = dynamic_cast<Unary*>(e)) {
         gen_expr(u->operand.get());
         if (u->op == Tok::MINUS) out_ << "  neg %rax\n";
-        else if (u->op == Tok::NOT) out_ << "  cmp $0, %rax\n  sete %al\n  movzb %al, %rax\n";
+        else if (u->op == Tok::TILDE) out_ << "  not %rax\n";
+        else if (u->op == Tok::NOT) out_ << "  cmp $0, %rax\n  sete %al\n  movzbq %al, %rax\n";
     } else if (auto* b = dynamic_cast<Binary*>(e)) {
         gen_expr(b->lhs.get());
         out_ << "  push %rax\n";
@@ -255,12 +257,21 @@ void Codegen::gen_expr(Expr* e) {
                 out_ << "  cqo\n";
                 out_ << "  idiv %r8\n"; 
                 break;
-            case Tok::EQ:      out_ << "  cmp %rax, %rcx\n  sete %al\n  movzb %al, %rax\n"; break;
-            case Tok::NE:      out_ << "  cmp %rax, %rcx\n  setne %al\n  movzb %al, %rax\n"; break;
-            case Tok::LT:      out_ << "  cmp %rax, %rcx\n  setl %al\n  movzb %al, %rax\n"; break;
-            case Tok::GT:      out_ << "  cmp %rax, %rcx\n  setg %al\n  movzb %al, %rax\n"; break;
-            case Tok::LE:      out_ << "  cmp %rax, %rcx\n  setle %al\n  movzb %al, %rax\n"; break;
-            case Tok::GE:      out_ << "  cmp %rax, %rcx\n  setge %al\n  movzb %al, %rax\n"; break;
+            case Tok::EQ:      out_ << "  cmp %rax, %rcx\n  sete %al\n  movzbq %al, %rax\n"; break;
+            case Tok::NE:      out_ << "  cmp %rax, %rcx\n  setne %al\n  movzbq %al, %rax\n"; break;
+            case Tok::LT:      out_ << "  cmp %rax, %rcx\n  setl %al\n  movzbq %al, %rax\n"; break;
+            case Tok::GT:      out_ << "  cmp %rax, %rcx\n  setg %al\n  movzbq %al, %rax\n"; break;
+            case Tok::LE:      out_ << "  cmp %rax, %rcx\n  setle %al\n  movzbq %al, %rax\n"; break;
+            case Tok::GE:      out_ << "  cmp %rax, %rcx\n  setge %al\n  movzbq %al, %rax\n"; break;
+            case Tok::PERCENT:
+                out_ << "  mov %rax, %r8\n  mov %rcx, %rax\n  cqo\n  idiv %r8\n  mov %rdx, %rax\n";
+                break;
+            case Tok::AND:
+                out_ << "  cmp $0, %rcx\n  setne %cl\n  cmp $0, %rax\n  setne %al\n  and %cl, %al\n  movzbq %al, %rax\n";
+                break;
+            case Tok::OR:
+                out_ << "  or %rcx, %rax\n  cmp $0, %rax\n  setne %al\n  movzbq %al, %rax\n";
+                break;
             default: throw std::runtime_error("Codegen: unsupported binary op");
         }
     } else if (auto* c = dynamic_cast<Call*>(e)) {

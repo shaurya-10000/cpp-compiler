@@ -16,10 +16,18 @@ jobs:
         run: cmake --build build --config Release
       - name: Smoke test
         run: |
-          ./build/minicc --compile test.cpp > test.s
-          gcc test.s -o test
-          ./test > out.txt
-          
+          set -euo pipefail
+          cat > smoke.cpp <<'EOF'
+          int main() {
+              print_str("Hello from Phase 4!\n");
+              print_int(42 + 8);
+              return 0;
+          }
+          EOF
+          ./build/minicc --compile smoke.cpp > smoke.s
+          gcc smoke.s -o smoke
+          ./smoke > out.txt
+          printf 'Hello from Phase 4!\n50\n' > expected.txt
           sed -i 's/\r$//' out.txt expected.txt
           diff -u expected.txt out.txt
           echo "Output matched exactly!"
