@@ -11,22 +11,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest] # Windows CI will fail if we try to run x86-64 Linux asm
     steps:
       - uses: actions/checkout@v4
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build --config Release
-      - name: Smoke test (Linux)
-        if: runner.os == 'Linux'
+      - name: Smoke test (Compile to asm)
         run: |
-          echo 'int main() { return 0; }' > test.cpp
-          ./build/minicc --dump-ast test.cpp
-      - name: Smoke test (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          "int main() { return 0; }" | Out-File -Encoding utf8 test.cpp
-          $exe = Get-ChildItem -Path build -Filter minicc.exe -Recurse | Select-Object -First 1
-          & $exe.FullName --dump-ast test.cpp
+          echo 'int main() { return 42; }' > test.cpp
+          ./build/minicc --compile test.cpp > test.s
+          gcc test.s -o test
+          ./test
+          if [ $? -ne 42 ]; then exit 1; fi
