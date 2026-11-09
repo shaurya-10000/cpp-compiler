@@ -159,10 +159,10 @@ void Codegen::gen_stmt(Stmt* s) {
             gen_block(i->else_body.get());
         }
         out_ << end_lbl << ":\n";
-    } else if (auto* b = dynamic_cast<Break*>(s)) {
+    } else if (dynamic_cast<Break*>(s) != nullptr) {
         if (current_break_label_.empty()) throw std::runtime_error("Codegen error: break outside of loop");
         out_ << "  jmp " << current_break_label_ << "\n";
-    } else if (auto* c = dynamic_cast<Continue*>(s)) {
+    } else if (dynamic_cast<Continue*>(s) != nullptr) {
         if (current_continue_label_.empty()) throw std::runtime_error("Codegen error: continue outside of loop");
         out_ << "  jmp " << current_continue_label_ << "\n";
     } else if (auto* f = dynamic_cast<For*>(s)) {

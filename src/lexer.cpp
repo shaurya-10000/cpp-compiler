@@ -108,8 +108,6 @@ std::vector<Token> Lexer::tokenize() {
                 case '{': mk(Tok::LBRACE); break;
                 case '}': mk(Tok::RBRACE); break;
                 case ';': mk(Tok::SEMICOLON); break;
-                case '&': mk(Tok::AND); break;
-                case '|': mk(Tok::OR); break;
                 case ',': mk(Tok::COMMA); break;
                 default:
                     throw std::runtime_error(std::string("unexpected char '") + first + "' at line " + std::to_string(l));
