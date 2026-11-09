@@ -32,14 +32,56 @@ std::string Codegen::add_string(const std::string& s) {
 void Codegen::generate(Program& program) {
     out_ << ".text\n";
     
-    // Print built-in (sys_write)
+    // --- Built-in: print_str(char* buf, long len) ---
+    // RDI = buffer, RSI = length
     out_ << ".globl print_str\n";
     out_ << "print_str:\n";
-    out_ << "  mov %rdi, %rsi\n"; // buffer
     out_ << "  mov $1, %rax\n";   // sys_write
+    out_ << "  mov $1, %rdi\n";   // stdout (we ignore the passed buffer in RDI and use RSI for length, wait)
+    // Fix: RDI = buffer, RSI = length
+    out_ << "  mov %rsi, %rdx\n"; // length
+    out_ << "  mov %rdi, %rsi\n"; // buffer
     out_ << "  mov $1, %rdi\n";   // stdout
-    out_ << "  mov $100, %rdx\n"; // max length (simplification)
+    out_ << "  mov $1, %rax\n";   // sys_write
     out_ << "  syscall\n";
+    out_ << "  ret\n";
+
+    // --- Built-in: print_int(long n) ---
+    out_ << ".globl print_int\n";
+    out_ << "print_int:\n";
+    out_ << "  sub $32, %rsp\n";       // buffer on stack
+    out_ << "  mov %rdi, %rax\n";      // number in rax
+    out_ << "  lea 31(%rsp), %rsi\n";  // pointer to end of buffer
+    out_ << "  movb $10, (%rsi)\n";    // newline
+    out_ << "  mov $1, %rcx\n";        // length = 1 (for newline)
+    out_ << "  mov $10, %r8\n";        // divisor
+    out_ << "  cmp $0, %rax\n";
+    out_ << "  jge .L_pos\n";
+    out_ << "  neg %rax\n";            // make positive for conversion
+    out_ << "  mov $1, %r9\n";         // negative flag
+    out_ << "  jmp .L_loop\n";
+    out_ << ".L_pos:\n";
+    out_ << "  mov $0, %r9\n";
+    out_ << ".L_loop:\n";
+    out_ << "  xor %rdx, %rdx\n";
+    out_ << "  div %r8\n";             // rax = quotient, rdx = remainder
+    out_ << "  add $48, %dl\n";        // convert to ASCII
+    out_ << "  dec %rsi\n";
+    out_ << "  mov %dl, (%rsi)\n";
+    out_ << "  inc %rcx\n";
+    out_ << "  test %rax, %rax\n";
+    out_ << "  jnz .L_loop\n";
+    out_ << "  cmp $0, %r9\n";
+    out_ << "  je .L_print\n";
+    out_ << "  dec %rsi\n";
+    out_ << "  movb $45, (%rsi)\n";    // '-' sign
+    out_ << "  inc %rcx\n";
+    out_ << ".L_print:\n";
+    out_ << "  mov %rcx, %rdx\n";      // length
+    out_ << "  mov $1, %rax\n";        // sys_write
+    out_ << "  mov $1, %rdi\n";        // stdout
+    out_ << "  syscall\n";
+    out_ << "  add $32, %rsp\n";
     out_ << "  ret\n";
 
     for (auto& fn : program.functions) {
@@ -171,6 +213,19 @@ void Codegen::gen_expr(Expr* e) {
             default: throw std::runtime_error("Codegen: unsupported binary op");
         }
     } else if (auto* c = dynamic_cast<Call*>(e)) {
+        // Special case for print_str
+        if (c->callee == "print_str" && c->args.size() == 1) {
+            if (auto* s = dynamic_cast<StringLit*>(c->args[0].get())) {
+                std::string lbl = add_string(s->value);
+                out_ << "  lea " << lbl << "(%rip), %rdi\n";
+                out_ << "  mov $" << s->value.length() << ", %rsi\n";
+                out_ << "  call print_str\n";
+                out_ << "  mov $0, %rax\n"; // Return 0
+                return;
+            }
+        }
+
+        // General function call
         for (auto it = c->args.rbegin(); it != c->args.rend(); ++it) {
             gen_expr(it->get());
             out_ << "  push %rax\n";

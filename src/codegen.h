@@ -16,7 +16,7 @@ private:
     int current_offset_ = 0;
     int label_count_ = 0;
     int string_count_ = 0;
-    std::vector<std::pair<std::string, std::string>> strings_; // label, value
+    std::vector<std::pair<std::string, std::string>> strings_;
 
     void push_scope();
     void pop_scope();

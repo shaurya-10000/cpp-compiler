@@ -14,25 +14,24 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build --config Release
-      - name: Smoke test (Compile to asm)
+      - name: Smoke test
         run: |
           cat << 'EOF' > test.cpp
           int main() {
-              print_str("Hello, world!\n");
-              return 42;
+              print_str("Hello from Phase 4!\n");
+              print_int(42 + 8);
+              return 0;
           }
           EOF
           ./build/minicc --compile test.cpp > test.s
           gcc test.s -o test
           
-          # Disable default bash error exit to capture the code
-          set +e
-          ./test
-          EXIT_CODE=$?
-          set -e
+          ./test > out.txt
           
-          echo "Program exited with: $EXIT_CODE"
-          if [ $EXIT_CODE -ne 42 ]; then 
-            echo "Expected 42, got $EXIT_CODE"
-            exit 1
-          fi
+          cat << 'EOF' > expected.txt
+          Hello from Phase 4!
+          50
+          EOF
+          
+          diff -u expected.txt out.txt
+          echo "Output matched exactly!"
