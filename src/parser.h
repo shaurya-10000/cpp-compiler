@@ -24,6 +24,7 @@ private:
     StmtPtr parse_var_decl();
     StmtPtr parse_if();
     StmtPtr parse_while();
+    StmtPtr parse_for();
     StmtPtr parse_return();
 
     ExprPtr parse_expr();
@@ -38,3 +39,4 @@ private:
     ExprPtr parse_postfix();
     ExprPtr parse_primary();
 };
+

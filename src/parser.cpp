@@ -69,8 +69,23 @@ std::unique_ptr<Block> Parser::parse_block() {
 
 StmtPtr Parser::parse_stmt() {
     if (check(Tok::KW_INT) || check(Tok::KW_BOOL) || check(Tok::KW_CHAR)) return parse_var_decl();
-    if (check(Tok::KW_IF)) return parse_if();
+        if (check(Tok::KW_IF)) return parse_if();
     if (check(Tok::KW_WHILE)) return parse_while();
+    if (check(Tok::KW_FOR)) return parse_for();
+    if (check(Tok::KW_BREAK)) { 
+        advance(); 
+        auto b = std::make_unique<Break>(); 
+        b->line = toks_[pos_-1].line; 
+        expect(Tok::SEMICOLON, "';'");
+        return b; 
+    }
+    if (check(Tok::KW_CONTINUE)) { 
+        advance(); 
+        auto c = std::make_unique<Continue>(); 
+        c->line = toks_[pos_-1].line; 
+        expect(Tok::SEMICOLON, "';'");
+        return c; 
+    }
     if (check(Tok::KW_RETURN)) return parse_return();
     if (check(Tok::LBRACE)) {
         auto b = parse_block();
@@ -118,6 +133,40 @@ StmtPtr Parser::parse_while() {
     expect(Tok::LPAREN, "'('");
     s->cond = parse_expr();
     expect(Tok::RPAREN, "')'");
+    s->body = parse_block();
+    return s;
+}
+
+StmtPtr Parser::parse_for() {
+    auto s = std::make_unique<For>();
+    s->line = advance().line; // 'for'
+    expect(Tok::LPAREN, "'('");
+    
+    // Init
+    if (check(Tok::SEMICOLON)) {
+        advance();
+    } else if (check(Tok::KW_INT) || check(Tok::KW_BOOL) || check(Tok::KW_CHAR)) {
+        s->init = parse_var_decl();
+    } else {
+        auto e = std::make_unique<ExprStmt>();
+        e->line = peek().line;
+        e->expr = parse_expr();
+        expect(Tok::SEMICOLON, "';'");
+        s->init = std::move(e);
+    }
+
+    // Cond
+    if (!check(Tok::SEMICOLON)) {
+        s->cond = parse_expr();
+    }
+    expect(Tok::SEMICOLON, "';'");
+
+    // Step
+    if (!check(Tok::RPAREN)) {
+        s->step = parse_expr();
+    }
+    expect(Tok::RPAREN, "')'");
+
     s->body = parse_block();
     return s;
 }
@@ -276,4 +325,5 @@ ExprPtr Parser::parse_primary() {
         }        default: error("expected expression");
     }
 }
+
 

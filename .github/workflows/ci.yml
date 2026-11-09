@@ -16,22 +16,30 @@ jobs:
         run: cmake --build build --config Release
       - name: Smoke test
         run: |
-          echo 'int main() {' > test.cpp
-          echo '    print_str("Hello from Phase 4!\n");' >> test.cpp
-          echo '    print_int(42 + 8);' >> test.cpp
-          echo '    return 0;' >> test.cpp
-          echo '}' >> test.cpp
+          cat << 'EOF' > test.cpp
+          int main() {
+              print_str("Testing loops:\n");
+              for (int i = 0; i < 5; i = i + 1) {
+                  if (i == 2) { continue; }
+                  if (i == 4) { break; }
+                  print_int(i);
+              }
+              return 0;
+          }
+          EOF
 
           ./build/minicc --compile test.cpp > test.s
           gcc test.s -o test
           
           ./test > out.txt
           
-          echo 'Hello from Phase 4!' > expected.txt
-          echo '50' >> expected.txt
+          cat << 'EOF' > expected.txt
+          Testing loops:
+          0
+          1
+          3
+          EOF
           
-          # Strip carriage returns to ignore CRLF vs LF issues
           sed -i 's/\r$//' out.txt expected.txt
-          
           diff -u expected.txt out.txt
           echo "Output matched exactly!"

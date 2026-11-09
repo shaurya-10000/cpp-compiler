@@ -14,7 +14,7 @@ using ExprPtr = std::unique_ptr<Expr>;
 struct IntLit : Expr   { long long value; };
 struct CharLit : Expr  { char value; };
 struct BoolLit : Expr  { bool value; };
-struct StringLit : Expr { std::string value; }; // NEW
+struct StringLit : Expr { std::string value; };
 struct VarRef : Expr   { std::string name; };
 struct Unary : Expr    { Tok op; ExprPtr operand; };
 struct Binary : Expr   { Tok op; ExprPtr lhs, rhs; };
@@ -34,6 +34,14 @@ struct ExprStmt : Stmt { ExprPtr expr; };
 struct If : Stmt { ExprPtr cond; std::unique_ptr<Block> then_body, else_body; };
 struct While : Stmt { ExprPtr cond; std::unique_ptr<Block> body; };
 struct Return : Stmt { ExprPtr value; };
+struct Break : Stmt {};
+struct Continue : Stmt {};
+struct For : Stmt {
+    StmtPtr init;
+    ExprPtr cond;
+    ExprPtr step;
+    std::unique_ptr<Block> body;
+};
 
 struct Param { std::string type, name; };
 struct FuncDecl : Stmt {

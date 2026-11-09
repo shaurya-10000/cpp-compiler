@@ -159,6 +159,54 @@ void Codegen::gen_stmt(Stmt* s) {
             gen_block(i->else_body.get());
         }
         out_ << end_lbl << ":\n";
+        } else if (auto* b = dynamic_cast<Break*>(s)) {
+        if (current_break_label_.empty()) throw std::runtime_error("Codegen error: break outside of loop");
+        out_ << "  jmp " << current_break_label_ << "\n";
+    } else if (auto* c = dynamic_cast<Continue*>(s)) {
+        if (current_continue_label_.empty()) throw std::runtime_error("Codegen error: continue outside of loop");
+        out_ << "  jmp " << current_continue_label_ << "\n";
+    } else if (auto* f = dynamic_cast<For*>(s)) {
+        push_scope();
+        if (f->init) gen_stmt(f->init.get());
+        
+        std::string start_lbl = new_label();
+        std::string end_lbl = new_label();
+        std::string step_lbl = new_label(); // Continue jumps here
+        
+        std::string old_break = current_break_label_;
+        std::string old_continue = current_continue_label_;
+        current_break_label_ = end_lbl;
+        current_continue_label_ = step_lbl;
+
+        out_ << start_lbl << ":\n";
+        if (f->cond) {
+            gen_expr(f->cond.get());
+            out_ << "  cmp     } else if (auto* w = dynamic_cast<While*>(s)) {
+        std::string start_lbl = new_label();
+        std::string end_lbl = new_label();
+        
+        std::string old_break = current_break_label_;
+        std::string old_continue = current_continue_label_;
+        current_break_label_ = end_lbl;
+        current_continue_label_ = start_lbl;
+
+        out_ << start_lbl << ":\n";
+        gen_expr(w->cond.get());
+        out_ << "  cmp } else if (auto* w = dynamic_cast<While*>(s)) {, %rax\n";
+            out_ << "  je " << end_lbl << "\n";
+        }
+        
+        gen_block(f->body.get());
+
+        out_ << step_lbl << ":\n";
+        if (f->step) gen_expr(f->step.get());
+        out_ << "  jmp " << start_lbl << "\n";
+        out_ << end_lbl << ":\n";
+
+        current_break_label_ = old_break;
+        current_continue_label_ = old_continue;
+        pop_scope();
+    }
     } else if (auto* w = dynamic_cast<While*>(s)) {
         std::string start_lbl = new_label();
         std::string end_lbl = new_label();
@@ -169,6 +217,16 @@ void Codegen::gen_stmt(Stmt* s) {
         gen_block(w->body.get());
         out_ << "  jmp " << start_lbl << "\n";
         out_ << end_lbl << ":\n";
+    } else if (auto* b = dynamic_cast<Block*>(s)) {, %rax\n";
+        out_ << "  je " << end_lbl << "\n";
+        
+        gen_block(w->body.get());
+        
+        out_ << "  jmp " << start_lbl << "\n";
+        out_ << end_lbl << ":\n";
+        
+        current_break_label_ = old_break;
+        current_continue_label_ = old_continue;
     } else if (auto* b = dynamic_cast<Block*>(s)) {
         gen_block(b);
     }
@@ -245,5 +303,6 @@ void Codegen::gen_expr(Expr* e) {
         out_ << "  call " << c->callee << "\n";
     }
 }
+
 
 
