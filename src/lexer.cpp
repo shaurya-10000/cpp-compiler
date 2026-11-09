@@ -56,6 +56,31 @@ std::vector<Token> Lexer::tokenize() {
             std::string s;
             while (std::isdigit(peek())) s += advance();
             out.push_back(Token{ Tok::INT_LIT, s, std::stoll(s), 0, l, c });
+        } else if (ch == '"') {
+            // Parse string literal
+            advance(); // skip opening quote
+            std::string s;
+            while (pos_ < src_.size() && peek() != '"') {
+                if (peek() == '\\') {
+                    advance();
+                    char esc = advance();
+                    if (esc == 'n') s += '\n';
+                    else if (esc == 't') s += '\t';
+                    else s += esc;
+                } else {
+                    s += advance();
+                }
+            }
+            if (pos_ >= src_.size()) throw std::runtime_error("unterminated string at line " + std::to_string(l));
+            advance(); // skip closing quote
+            out.push_back(Token{ Tok::STRING_LIT, s, 0, 0, l, c });
+        } else if (ch == '\'') {
+            // Parse char literal
+            advance(); // skip opening quote
+            char val = advance();
+            if (peek() != '\'') throw std::runtime_error("unterminated char at line " + std::to_string(l));
+            advance(); // skip closing quote
+            out.push_back(Token{ Tok::CHAR_LIT, std::string(1, val), 0, val, l, c });
         } else {
             char first = advance();
             auto mk = [&](Tok t) {
@@ -73,6 +98,7 @@ std::vector<Token> Lexer::tokenize() {
                 case '{': mk(Tok::LBRACE); break;
                 case '}': mk(Tok::RBRACE); break;
                 case ';': mk(Tok::SEMICOLON); break;
+                case ',': mk(Tok::COMMA); break;
                 default:
                     throw std::runtime_error(std::string("unexpected char '") + first + "' at line " + std::to_string(l));
             }

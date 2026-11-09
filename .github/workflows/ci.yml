@@ -16,7 +16,12 @@ jobs:
         run: cmake --build build --config Release
       - name: Smoke test (Compile to asm)
         run: |
-          printf 'int main() {\n  print_str("Hello, world!\\n");\n  return 42;\n}' > test.cpp
+          cat << 'EOF' > test.cpp
+          int main() {
+              print_str("Hello, world!\n");
+              return 42;
+          }
+          EOF
           ./build/minicc --compile test.cpp > test.s
           gcc test.s -o test
           ./test
