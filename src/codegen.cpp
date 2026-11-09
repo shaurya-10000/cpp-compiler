@@ -23,8 +23,25 @@ std::string Codegen::new_label() {
     return ".L" + std::to_string(label_count_++);
 }
 
+std::string Codegen::add_string(const std::string& s) {
+    std::string lbl = ".LC" + std::to_string(string_count_++);
+    strings_.push_back({lbl, s});
+    return lbl;
+}
+
 void Codegen::generate(Program& program) {
     out_ << ".text\n";
+    
+    // Print built-in (sys_write)
+    out_ << ".globl print_str\n";
+    out_ << "print_str:\n";
+    out_ << "  mov %rdi, %rsi\n"; // buffer
+    out_ << "  mov $1, %rax\n";   // sys_write
+    out_ << "  mov $1, %rdi\n";   // stdout
+    out_ << "  mov $100, %rdx\n"; // max length (simplification)
+    out_ << "  syscall\n";
+    out_ << "  ret\n";
+
     for (auto& fn : program.functions) {
         current_offset_ = 0;
         scopes_.clear();
@@ -34,13 +51,8 @@ void Codegen::generate(Program& program) {
         out_ << fn->name << ":\n";
         out_ << "  push %rbp\n";
         out_ << "  mov %rsp, %rbp\n";
-        
-        // We need a fixed stack size. To keep it simple, we allocate a fixed 
-        // amount of space for all local variables (we'll just use a large buffer).
-        // In a real compiler, we'd do a pre-pass to count exact stack size.
         out_ << "  sub $256, %rsp\n"; 
 
-        // Parameters (System V: rdi, rsi, rdx, rcx, r8, r9)
         const char* regs[] = {"%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
         for (size_t i = 0; i < fn->params.size() && i < 6; ++i) {
             allocate_var(fn->params[i].name);
@@ -49,12 +61,17 @@ void Codegen::generate(Program& program) {
 
         gen_block(fn->body.get());
 
-        // Default return 0 if void or missing return
         out_ << "  mov $0, %rax\n"; 
         out_ << "  leave\n";
         out_ << "  ret\n";
         
         pop_scope();
+    }
+
+    out_ << ".section .rodata\n";
+    for (auto& pair : strings_) {
+        out_ << pair.first << ":\n";
+        out_ << "  .string \"" << pair.second << "\"\n";
     }
 }
 
@@ -117,6 +134,9 @@ void Codegen::gen_expr(Expr* e) {
         out_ << "  mov $" << (int)c->value << ", %rax\n";
     } else if (auto* b = dynamic_cast<BoolLit*>(e)) {
         out_ << "  mov $" << (b->value ? 1 : 0) << ", %rax\n";
+    } else if (auto* s = dynamic_cast<StringLit*>(e)) {
+        std::string lbl = add_string(s->value);
+        out_ << "  lea " << lbl << "(%rip), %rax\n";
     } else if (auto* v = dynamic_cast<VarRef*>(e)) {
         out_ << "  mov -" << lookup_var(v->name) << "(%rbp), %rax\n";
     } else if (auto* a = dynamic_cast<Assign*>(e)) {
@@ -130,15 +150,15 @@ void Codegen::gen_expr(Expr* e) {
         gen_expr(b->lhs.get());
         out_ << "  push %rax\n";
         gen_expr(b->rhs.get());
-        out_ << "  pop %rcx\n"; // rcx = lhs, rax = rhs
+        out_ << "  pop %rcx\n"; 
 
         switch (b->op) {
             case Tok::PLUS:    out_ << "  add %rcx, %rax\n"; break;
-            case Tok::MINUS:   out_ << "  sub %rax, %rcx\n  mov %rcx, %rax\n"; break; // rhs - lhs? wait: rcx (lhs) - rax (rhs). we want lhs - rhs
+            case Tok::MINUS:   out_ << "  sub %rax, %rcx\n  mov %rcx, %rax\n"; break;
             case Tok::STAR:    out_ << "  imul %rcx, %rax\n"; break;
             case Tok::SLASH:   
-                out_ << "  mov %rax, %r8\n"; // divisor
-                out_ << "  mov %rcx, %rax\n"; // dividend
+                out_ << "  mov %rax, %r8\n"; 
+                out_ << "  mov %rcx, %rax\n";
                 out_ << "  cqo\n";
                 out_ << "  idiv %r8\n"; 
                 break;
@@ -151,21 +171,17 @@ void Codegen::gen_expr(Expr* e) {
             default: throw std::runtime_error("Codegen: unsupported binary op");
         }
     } else if (auto* c = dynamic_cast<Call*>(e)) {
-        // Evaluate args in reverse order for stack
         for (auto it = c->args.rbegin(); it != c->args.rend(); ++it) {
             gen_expr(it->get());
             out_ << "  push %rax\n";
         }
         
-        // Pop into registers (System V: rdi, rsi, rdx...)
         const char* regs[] = {"%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
         for (size_t i = 0; i < c->args.size() && i < 6; ++i) {
             out_ << "  pop " << regs[i] << "\n";
         }
         
-        out_ << "  mov $0, %rax\n"; // 0 vector regs for varargs
+        out_ << "  mov $0, %rax\n"; 
         out_ << "  call " << c->callee << "\n";
-        
-        // Clean up stack if > 6 args (not implemented for simplicity)
     }
 }

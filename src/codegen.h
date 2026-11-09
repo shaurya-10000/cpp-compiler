@@ -15,6 +15,8 @@ private:
     std::vector<std::unordered_map<std::string, int>> scopes_;
     int current_offset_ = 0;
     int label_count_ = 0;
+    int string_count_ = 0;
+    std::vector<std::pair<std::string, std::string>> strings_; // label, value
 
     void push_scope();
     void pop_scope();
@@ -25,4 +27,5 @@ private:
     void gen_expr(Expr* e);
     void gen_block(Block* b);
     std::string new_label();
+    std::string add_string(const std::string& s);
 };

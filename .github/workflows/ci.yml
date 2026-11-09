@@ -6,12 +6,8 @@ on:
     branches: [ main ]
 jobs:
   build:
-    name: Build on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest] # Windows CI will fail if we try to run x86-64 Linux asm
+    name: Build on Ubuntu
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Configure
@@ -20,7 +16,7 @@ jobs:
         run: cmake --build build --config Release
       - name: Smoke test (Compile to asm)
         run: |
-          echo 'int main() { return 42; }' > test.cpp
+          printf 'int main() {\n  print_str("Hello, world!\\n");\n  return 42;\n}' > test.cpp
           ./build/minicc --compile test.cpp > test.s
           gcc test.s -o test
           ./test

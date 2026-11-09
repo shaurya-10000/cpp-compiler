@@ -14,6 +14,7 @@ using ExprPtr = std::unique_ptr<Expr>;
 struct IntLit : Expr   { long long value; };
 struct CharLit : Expr  { char value; };
 struct BoolLit : Expr  { bool value; };
+struct StringLit : Expr { std::string value; }; // NEW
 struct VarRef : Expr   { std::string name; };
 struct Unary : Expr    { Tok op; ExprPtr operand; };
 struct Binary : Expr   { Tok op; ExprPtr lhs, rhs; };
