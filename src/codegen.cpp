@@ -113,7 +113,15 @@ void Codegen::generate(Program& program) {
     out_ << ".section .rodata\n";
     for (auto& pair : strings_) {
         out_ << pair.first << ":\n";
-        out_ << "  .string \"" << pair.second << "\"\n";
+                out_ << "  .string \"";
+        for (char c : pair.second) {
+            if (c == '\n') out_ << "\\n";
+            else if (c == '\t') out_ << "\\t";
+            else if (c == '\"') out_ << "\\\"";
+            else if (c == '\\') out_ << "\\\\";
+            else out_ << c;
+        }
+        out_ << "\"\n";
     }
 }
 
@@ -240,3 +248,4 @@ void Codegen::gen_expr(Expr* e) {
         out_ << "  call " << c->callee << "\n";
     }
 }
+
