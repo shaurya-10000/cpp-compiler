@@ -1,4 +1,0 @@
-Testing loops:
-0
-1
-3
