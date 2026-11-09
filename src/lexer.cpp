@@ -108,9 +108,6 @@ std::vector<Token> Lexer::tokenize() {
                 case '{': mk(Tok::LBRACE); break;
                 case '}': mk(Tok::RBRACE); break;
                 case ';': mk(Tok::SEMICOLON); break;
-                case '<': mk(Tok::LT); break;
-                case '>': mk(Tok::GT); break;
-                case '!': mk(Tok::NOT); break;
                 case '&': mk(Tok::AND); break;
                 case '|': mk(Tok::OR); break;
                 case ',': mk(Tok::COMMA); break;
