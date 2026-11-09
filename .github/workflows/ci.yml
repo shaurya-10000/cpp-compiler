@@ -30,5 +30,8 @@ jobs:
           echo 'Hello from Phase 4!' > expected.txt
           echo '50' >> expected.txt
           
+          # Strip carriage returns to ignore CRLF vs LF issues
+          sed -i 's/\r$//' out.txt expected.txt
+          
           diff -u expected.txt out.txt
           echo "Output matched exactly!"

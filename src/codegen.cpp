@@ -36,9 +36,6 @@ void Codegen::generate(Program& program) {
     // RDI = buffer, RSI = length
     out_ << ".globl print_str\n";
     out_ << "print_str:\n";
-    out_ << "  mov $1, %rax\n";   // sys_write
-    out_ << "  mov $1, %rdi\n";   // stdout (we ignore the passed buffer in RDI and use RSI for length, wait)
-    // Fix: RDI = buffer, RSI = length
     out_ << "  mov %rsi, %rdx\n"; // length
     out_ << "  mov %rdi, %rsi\n"; // buffer
     out_ << "  mov $1, %rdi\n";   // stdout
@@ -248,4 +245,5 @@ void Codegen::gen_expr(Expr* e) {
         out_ << "  call " << c->callee << "\n";
     }
 }
+
 
