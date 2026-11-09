@@ -24,5 +24,15 @@ jobs:
           EOF
           ./build/minicc --compile test.cpp > test.s
           gcc test.s -o test
+          
+          # Disable default bash error exit to capture the code
+          set +e
           ./test
-          if [ $? -ne 42 ]; then exit 1; fi
+          EXIT_CODE=$?
+          set -e
+          
+          echo "Program exited with: $EXIT_CODE"
+          if [ $EXIT_CODE -ne 42 ]; then 
+            echo "Expected 42, got $EXIT_CODE"
+            exit 1
+          fi
