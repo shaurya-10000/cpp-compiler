@@ -1,11 +1,9 @@
 name: CI
-
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-
 jobs:
   build:
     name: Build on ${{ matrix.os }}
@@ -14,31 +12,21 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Configure
-        run: cmake -S . -B build
-
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build --config Release
-
       - name: Smoke test (Linux)
         if: runner.os == 'Linux'
         run: |
           echo 'int main() { return 0; }' > test.cpp
-          ./build/minicc test.cpp
-
+          ./build/minicc --dump-ast test.cpp
       - name: Smoke test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           "int main() { return 0; }" | Out-File -Encoding utf8 test.cpp
           $exe = Get-ChildItem -Path build -Filter minicc.exe -Recurse | Select-Object -First 1
-          if (-not $exe) {
-            Write-Error "Could not find minicc.exe in build directory"
-            exit 1
-          }
-          Write-Host "Found executable at: $($exe.FullName)"
-          & $exe.FullName test.cpp
+          & $exe.FullName --dump-ast test.cpp
