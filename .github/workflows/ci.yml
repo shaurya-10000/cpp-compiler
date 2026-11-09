@@ -16,29 +16,9 @@ jobs:
         run: cmake --build build --config Release
       - name: Smoke test
         run: |
-          cat > test.cpp <<'EOF'
-          int main() {
-              print_str("Testing loops:\n");
-              for (int i = 0; i < 5; i = i + 1) {
-                  if (i == 2) { continue; }
-                  if (i == 4) { break; }
-                  print_int(i);
-              }
-              return 0;
-          }
-          EOF
-
           ./build/minicc --compile test.cpp > test.s
           gcc test.s -o test
-          
           ./test > out.txt
-          
-          cat > expected.txt <<'EOF'
-          Testing loops:
-          0
-          1
-          3
-          EOF
           
           sed -i 's/\r$//' out.txt expected.txt
           diff -u expected.txt out.txt
