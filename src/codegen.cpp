@@ -33,7 +33,6 @@ void Codegen::generate(Program& program) {
     out_ << ".text\n";
     
     // --- Built-in: print_str(char* buf, long len) ---
-    // RDI = buffer, RSI = length
     out_ << ".globl print_str\n";
     out_ << "print_str:\n";
     out_ << "  mov %rsi, %rdx\n"; // length
@@ -110,7 +109,7 @@ void Codegen::generate(Program& program) {
     out_ << ".section .rodata\n";
     for (auto& pair : strings_) {
         out_ << pair.first << ":\n";
-                out_ << "  .string \"";
+        out_ << "  .string \"";
         for (char c : pair.second) {
             if (c == '\n') out_ << "\\n";
             else if (c == '\t') out_ << "\\t";
@@ -159,7 +158,7 @@ void Codegen::gen_stmt(Stmt* s) {
             gen_block(i->else_body.get());
         }
         out_ << end_lbl << ":\n";
-        } else if (auto* b = dynamic_cast<Break*>(s)) {
+    } else if (auto* b = dynamic_cast<Break*>(s)) {
         if (current_break_label_.empty()) throw std::runtime_error("Codegen error: break outside of loop");
         out_ << "  jmp " << current_break_label_ << "\n";
     } else if (auto* c = dynamic_cast<Continue*>(s)) {
@@ -181,18 +180,7 @@ void Codegen::gen_stmt(Stmt* s) {
         out_ << start_lbl << ":\n";
         if (f->cond) {
             gen_expr(f->cond.get());
-            out_ << "  cmp     } else if (auto* w = dynamic_cast<While*>(s)) {
-        std::string start_lbl = new_label();
-        std::string end_lbl = new_label();
-        
-        std::string old_break = current_break_label_;
-        std::string old_continue = current_continue_label_;
-        current_break_label_ = end_lbl;
-        current_continue_label_ = start_lbl;
-
-        out_ << start_lbl << ":\n";
-        gen_expr(w->cond.get());
-        out_ << "  cmp } else if (auto* w = dynamic_cast<While*>(s)) {, %rax\n";
+            out_ << "  cmp $0, %rax\n";
             out_ << "  je " << end_lbl << "\n";
         }
         
@@ -206,18 +194,18 @@ void Codegen::gen_stmt(Stmt* s) {
         current_break_label_ = old_break;
         current_continue_label_ = old_continue;
         pop_scope();
-    }
     } else if (auto* w = dynamic_cast<While*>(s)) {
         std::string start_lbl = new_label();
         std::string end_lbl = new_label();
+        
+        std::string old_break = current_break_label_;
+        std::string old_continue = current_continue_label_;
+        current_break_label_ = end_lbl;
+        current_continue_label_ = start_lbl;
+
         out_ << start_lbl << ":\n";
         gen_expr(w->cond.get());
         out_ << "  cmp $0, %rax\n";
-        out_ << "  je " << end_lbl << "\n";
-        gen_block(w->body.get());
-        out_ << "  jmp " << start_lbl << "\n";
-        out_ << end_lbl << ":\n";
-    } else if (auto* b = dynamic_cast<Block*>(s)) {, %rax\n";
         out_ << "  je " << end_lbl << "\n";
         
         gen_block(w->body.get());
@@ -276,19 +264,17 @@ void Codegen::gen_expr(Expr* e) {
             default: throw std::runtime_error("Codegen: unsupported binary op");
         }
     } else if (auto* c = dynamic_cast<Call*>(e)) {
-        // Special case for print_str
         if (c->callee == "print_str" && c->args.size() == 1) {
             if (auto* s = dynamic_cast<StringLit*>(c->args[0].get())) {
                 std::string lbl = add_string(s->value);
                 out_ << "  lea " << lbl << "(%rip), %rdi\n";
                 out_ << "  mov $" << s->value.length() << ", %rsi\n";
                 out_ << "  call print_str\n";
-                out_ << "  mov $0, %rax\n"; // Return 0
+                out_ << "  mov $0, %rax\n";
                 return;
             }
         }
 
-        // General function call
         for (auto it = c->args.rbegin(); it != c->args.rend(); ++it) {
             gen_expr(it->get());
             out_ << "  push %rax\n";
@@ -303,6 +289,3 @@ void Codegen::gen_expr(Expr* e) {
         out_ << "  call " << c->callee << "\n";
     }
 }
-
-
-
