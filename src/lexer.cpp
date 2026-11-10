@@ -3,6 +3,12 @@
 #include <stdexcept>
 #include <unordered_map>
 
+namespace {
+bool is_digit(char ch) { return std::isdigit(static_cast<unsigned char>(ch)) != 0; }
+bool is_alpha(char ch) { return std::isalpha(static_cast<unsigned char>(ch)) != 0 || ch == '_'; }
+bool is_alnum(char ch) { return std::isalnum(static_cast<unsigned char>(ch)) != 0 || ch == '_'; }
+}
+
 Lexer::Lexer(std::string src) : src_(std::move(src)) {}
 
 char Lexer::peek(int off) const {
@@ -47,18 +53,42 @@ std::vector<Token> Lexer::tokenize() {
         int l = line_, c = col_;
         char ch = peek();
 
-        if (std::isalpha(ch) || ch == '_') {
+        if (is_alpha(ch)) {
             std::string s;
-            while (std::isalnum(peek()) || peek() == '_') s += advance();
+            while (is_alnum(peek())) s += advance();
             auto it = kws.find(s);
             out.push_back(Token{ it == kws.end() ? Tok::IDENT : it->second, s, 0, 0, l, c });
-        } else if (std::isdigit(ch)) {
+        } else if (is_digit(ch)) {
             std::string s;
-            while (std::isdigit(peek())) s += advance();
-            out.push_back(Token{ Tok::INT_LIT, s, std::stoll(s), 0, l, c });
+            bool is_float = false;
+            while (is_digit(peek())) s += advance();
+            if (peek() == '.' && is_digit(peek(1))) {
+                is_float = true;
+                s += advance();
+                while (is_digit(peek())) s += advance();
+            }
+            if (peek() == 'e' || peek() == 'E') {
+                char n1 = peek(1);
+                bool signed_exp = (n1 == '+' || n1 == '-') && is_digit(peek(2));
+                if (is_digit(n1) || signed_exp) {
+                    is_float = true;
+                    s += advance();
+                    if (signed_exp) s += advance();
+                    while (is_digit(peek())) s += advance();
+                }
+            }
+            if (is_float) {
+                out.push_back(Token{ Tok::DOUBLE_LIT, s, 0, 0, l, c, std::stod(s) });
+            } else {
+                long long v = 0;
+                try { v = std::stoll(s); }
+                catch (const std::exception&) {
+                    throw std::runtime_error("integer literal too large at line " + std::to_string(l));
+                }
+                out.push_back(Token{ Tok::INT_LIT, s, v, 0, l, c });
+            }
         } else if (ch == '"') {
-            // Parse string literal
-            advance(); // skip opening quote
+            advance();
             std::string s;
             while (pos_ < src_.size() && peek() != '"') {
                 if (peek() == '\\') {
@@ -72,14 +102,17 @@ std::vector<Token> Lexer::tokenize() {
                 }
             }
             if (pos_ >= src_.size()) throw std::runtime_error("unterminated string at line " + std::to_string(l));
-            advance(); // skip closing quote
+            advance();
             out.push_back(Token{ Tok::STRING_LIT, s, 0, 0, l, c });
         } else if (ch == '\'') {
-            // Parse char literal
-            advance(); // skip opening quote
+            advance();
             char val = advance();
+            if (val == '\\') {
+                char esc = advance();
+                val = esc == 'n' ? '\n' : esc == 't' ? '\t' : esc == '0' ? '\0' : esc;
+            }
             if (peek() != '\'') throw std::runtime_error("unterminated char at line " + std::to_string(l));
-            advance(); // skip closing quote
+            advance();
             out.push_back(Token{ Tok::CHAR_LIT, std::string(1, val), 0, val, l, c });
         } else {
             char first = advance();
@@ -117,5 +150,3 @@ std::vector<Token> Lexer::tokenize() {
     out.push_back(Token{ Tok::END, "", 0, 0, line_, col_ });
     return out;
 }
-
-

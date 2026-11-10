@@ -1,4 +1,5 @@
 #include "parser.h"
+#include "ast_ext.h"
 #include <stdexcept>
 
 Parser::Parser(std::vector<Token> toks) : toks_(std::move(toks)) {}
@@ -32,7 +33,7 @@ std::unique_ptr<FuncDecl> Parser::parse_function() {
     fn->line = peek().line;
     
     // Type
-    if (!match(Tok::KW_INT) && !match(Tok::KW_VOID) && !match(Tok::KW_BOOL) && !match(Tok::KW_CHAR))
+    if (!match(Tok::KW_INT) && !match(Tok::KW_VOID) && !match(Tok::KW_BOOL) && !match(Tok::KW_CHAR) && !match(Tok::KW_DOUBLE))
         error("expected return type");
     fn->return_type = toks_[pos_-1].text;
 
@@ -44,7 +45,7 @@ std::unique_ptr<FuncDecl> Parser::parse_function() {
     if (!check(Tok::RPAREN)) {
         do {
             Param p;
-            if (!match(Tok::KW_INT) && !match(Tok::KW_BOOL) && !match(Tok::KW_CHAR))
+            if (!match(Tok::KW_INT) && !match(Tok::KW_BOOL) && !match(Tok::KW_CHAR) && !match(Tok::KW_DOUBLE))
                 error("expected parameter type");
             p.type = toks_[pos_-1].text;
             p.name = expect(Tok::IDENT, "parameter name").text;
@@ -69,7 +70,7 @@ std::unique_ptr<Block> Parser::parse_block() {
 }
 
 StmtPtr Parser::parse_stmt() {
-    if (check(Tok::KW_INT) || check(Tok::KW_BOOL) || check(Tok::KW_CHAR)) return parse_var_decl();
+    if ((check(Tok::KW_INT) || check(Tok::KW_BOOL) || check(Tok::KW_CHAR) || check(Tok::KW_DOUBLE))) return parse_var_decl();
         if (check(Tok::KW_IF)) return parse_if();
     if (check(Tok::KW_WHILE)) return parse_while();
     if (check(Tok::KW_FOR)) return parse_for();
@@ -153,7 +154,7 @@ StmtPtr Parser::parse_for() {
     // Init
     if (check(Tok::SEMICOLON)) {
         advance();
-    } else if (check(Tok::KW_INT) || check(Tok::KW_BOOL) || check(Tok::KW_CHAR)) {
+    } else if ((check(Tok::KW_INT) || check(Tok::KW_BOOL) || check(Tok::KW_CHAR) || check(Tok::KW_DOUBLE))) {
         s->init = parse_var_decl();
     } else {
         auto e = std::make_unique<ExprStmt>();
@@ -272,6 +273,16 @@ ExprPtr Parser::parse_multiplicative() {
 }
 
 ExprPtr Parser::parse_unary() {
+    if (check(Tok::LPAREN) && peek(2).type == Tok::RPAREN &&
+        (peek(1).type == Tok::KW_INT || peek(1).type == Tok::KW_BOOL ||
+         peek(1).type == Tok::KW_CHAR || peek(1).type == Tok::KW_DOUBLE)) {
+        auto cast = std::make_unique<CastExpr>();
+        cast->line = advance().line;
+        cast->type = advance().text;
+        advance(); // ')'
+        cast->operand = parse_unary();
+        return cast;
+    }
     if (check(Tok::MINUS) || check(Tok::NOT) || check(Tok::TILDE)) {
         Tok op = advance().type;
         auto u = std::make_unique<Unary>();
@@ -307,6 +318,10 @@ ExprPtr Parser::parse_primary() {
         case Tok::INT_LIT: {
             auto n = std::make_unique<IntLit>(); n->line = line; n->value = t.int_val;
             advance(); return n;
+        }
+        case Tok::DOUBLE_LIT: {
+            auto d = std::make_unique<DoubleLit>(); d->line = line; d->value = t.dbl_val;
+            advance(); return d;
         }
         case Tok::CHAR_LIT: {
             auto c = std::make_unique<CharLit>(); c->line = line; c->value = t.char_val;

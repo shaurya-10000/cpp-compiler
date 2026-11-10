@@ -1,9 +1,11 @@
 #include "lexer.h"
 #include "parser.h"
+#include "prelude.h"
 #include "sema.h"
 #include "codegen.h"
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <sstream>
 
 int main(int argc, char** argv) {
@@ -40,9 +42,17 @@ int main(int argc, char** argv) {
         }
 
         if (mode == "--compile") {
+            // Library functions written in minicc are prepended to the user's program.
+            Lexer prelude_lex(kPrelude);
+            Parser prelude_parser(prelude_lex.tokenize());
+            auto prelude = prelude_parser.parse();
+            prog.functions.insert(prog.functions.begin(),
+                                  std::make_move_iterator(prelude.functions.begin()),
+                                  std::make_move_iterator(prelude.functions.end()));
+
             Sema sema;
             sema.analyze(prog);
-            Codegen codegen(std::cout);
+            Codegen codegen(std::cout, sema);
             codegen.generate(prog);
             return 0;
         }
