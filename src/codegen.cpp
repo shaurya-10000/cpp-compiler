@@ -22,12 +22,12 @@ Type Codegen::type_of(const Expr* e) const {
 void Codegen::push_scope() { scopes_.emplace_back(); }
 void Codegen::pop_scope() { scopes_.pop_back(); }
 
-void Codegen::allocate_var(const std::string& name) {
-    current_offset_ += 8;
-    scopes_.back()[name] = current_offset_;
+void Codegen::allocate_var(const std::string& name, Type type, int bytes, bool is_array) {
+    current_offset_ += bytes;
+    scopes_.back()[name] = VarSlot{current_offset_, is_array, type};
 }
 
-int Codegen::lookup_var(const std::string& name) {
+VarSlot Codegen::lookup_var(const std::string& name) {
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
         auto found = it->find(name);
         if (found != it->end()) return found->second;
@@ -46,8 +46,14 @@ std::string Codegen::add_string(const std::string& s) {
 void Codegen::emit_builtins() {
     out_ << R"ASM(.globl print_str
 print_str:
-  mov %rsi, %rdx
   mov %rdi, %rsi
+  xor %rdx, %rdx
+.L_strlen:
+  cmpb $0, (%rsi,%rdx)
+  je .L_strlen_done
+  inc %rdx
+  jmp .L_strlen
+.L_strlen_done:
   mov $1, %rdi
   mov $1, %rax
   syscall
@@ -143,13 +149,12 @@ void Codegen::gen_function(FuncDecl& fn) {
     scopes_.clear();
     push_scope();
 
-    // Body is buffered so the exact frame size is known when the prologue is written.
     std::ostringstream body;
     cur_ = &body;
 
     for (size_t i = 0; i < fn.params.size(); ++i) {
-        allocate_var(fn.params[i].name);
-        int off = lookup_var(fn.params[i].name);
+        allocate_var(fn.params[i].name, type_from_name(fn.params[i].type));
+        int off = lookup_var(fn.params[i].name).off;
         if (i < 6) {
             emit() << "  mov " << kArgRegs[i] << ", -" << off << "(%rbp)\n";
         } else {
@@ -175,8 +180,30 @@ void Codegen::gen_function(FuncDecl& fn) {
     out_ << body.str();
 }
 
-// ---------- conversions ----------
-// Values always live in %rax. Doubles are carried as their raw 64-bit pattern.
+// ---------- loads, stores, conversions ----------
+// Values live in %rax. Doubles are carried as raw 64-bit patterns.
+
+void Codegen::emit_load_var(const VarSlot& s) {
+    if (s.is_array) { emit() << "  lea -" << s.off << "(%rbp), %rax\n"; return; }
+    if (s.type == ty::Char) emit() << "  movsbq -" << s.off << "(%rbp), %rax\n";
+    else if (s.type == ty::Bool) emit() << "  movzbq -" << s.off << "(%rbp), %rax\n";
+    else emit() << "  mov -" << s.off << "(%rbp), %rax\n";
+}
+
+void Codegen::emit_load(Type elem) {
+    if (elem == ty::Char) emit() << "  movsbq (%rax), %rax\n";
+    else if (elem == ty::Bool) emit() << "  movzbq (%rax), %rax\n";
+    else emit() << "  mov (%rax), %rax\n";
+}
+
+void Codegen::emit_store(Type elem) {
+    if (elem == ty::Char || elem == ty::Bool) emit() << "  mov %al, (%rdx)\n";
+    else emit() << "  mov %rax, (%rdx)\n";
+}
+
+void Codegen::emit_scale(const char* reg, int size) {
+    if (size != 1) emit() << "  imul $" << size << ", " << reg << ", " << reg << "\n";
+}
 
 void Codegen::emit_to_bool_from_double() {
     emit() << "  movq %rax, %xmm0\n"
@@ -189,31 +216,29 @@ void Codegen::emit_to_bool_from_double() {
 }
 
 void Codegen::emit_convert(Type from, Type to) {
-    if (from == to || to == Type::Void || to == Type::Str) return;
-    if (to == Type::Double) {
+    if (from == to || to.is_void() || to.is_ptr()) return;
+    if (from.is_ptr()) {   // pointer -> integer (explicit cast)
+        if (to == ty::Bool) emit() << "  cmp $0, %rax\n  setne %al\n  movzbq %al, %rax\n";
+        else if (to == ty::Char) emit() << "  movsbq %al, %rax\n";
+        return;
+    }
+    if (to.is_double()) {
         emit() << "  cvtsi2sdq %rax, %xmm0\n  movq %xmm0, %rax\n";
         return;
     }
-    if (from == Type::Double) {
-        if (to == Type::Bool) { emit_to_bool_from_double(); return; }
+    if (from.is_double()) {
+        if (to == ty::Bool) { emit_to_bool_from_double(); return; }
         emit() << "  movq %rax, %xmm0\n  cvttsd2si %xmm0, %rax\n";
-        if (to == Type::Char) emit() << "  movsbq %al, %rax\n";
+        if (to == ty::Char) emit() << "  movsbq %al, %rax\n";
         return;
     }
-    if (to == Type::Bool) {
-        emit() << "  cmp $0, %rax\n  setne %al\n  movzbq %al, %rax\n";
-        return;
-    }
-    if (to == Type::Char) {
-        emit() << "  movsbq %al, %rax\n";
-        return;
-    }
-    // to Int from Char/Bool: already sign-extended
+    if (to == ty::Bool) emit() << "  cmp $0, %rax\n  setne %al\n  movzbq %al, %rax\n";
+    else if (to == ty::Char) emit() << "  movsbq %al, %rax\n";
 }
 
 void Codegen::gen_cond(Expr* e) {
     gen_expr(e);
-    if (type_of(e) == Type::Double) emit_to_bool_from_double();
+    if (type_of(e).is_double()) emit_to_bool_from_double();
     emit() << "  cmp $0, %rax\n";
 }
 
@@ -241,6 +266,54 @@ void Codegen::gen_double_binary(Tok op) {
     }
 }
 
+void Codegen::gen_pointer_binary(Tok op, Type lt, Type rt) {
+    // %rcx = lhs, %rax = rhs
+    switch (op) {
+        case Tok::PLUS:
+            if (lt.is_ptr()) emit_scale("%rax", size_of(lt.pointee()));
+            else emit_scale("%rcx", size_of(rt.pointee()));
+            emit() << "  add %rcx, %rax\n";
+            break;
+        case Tok::MINUS:
+            if (rt.is_ptr()) {   // pointer difference, in elements
+                emit() << "  sub %rax, %rcx\n  mov %rcx, %rax\n";
+                int sz = size_of(lt.pointee());
+                if (sz != 1) emit() << "  cqo\n  mov $" << sz << ", %r8\n  idiv %r8\n";
+            } else {
+                emit_scale("%rax", size_of(lt.pointee()));
+                emit() << "  sub %rax, %rcx\n  mov %rcx, %rax\n";
+            }
+            break;
+        case Tok::EQ: emit() << "  cmp %rax, %rcx\n  sete %al\n  movzbq %al, %rax\n"; break;
+        case Tok::NE: emit() << "  cmp %rax, %rcx\n  setne %al\n  movzbq %al, %rax\n"; break;
+        case Tok::LT: emit() << "  cmp %rax, %rcx\n  setb %al\n  movzbq %al, %rax\n"; break;
+        case Tok::GT: emit() << "  cmp %rax, %rcx\n  seta %al\n  movzbq %al, %rax\n"; break;
+        case Tok::LE: emit() << "  cmp %rax, %rcx\n  setbe %al\n  movzbq %al, %rax\n"; break;
+        case Tok::GE: emit() << "  cmp %rax, %rcx\n  setae %al\n  movzbq %al, %rax\n"; break;
+        default: throw std::runtime_error("Codegen: unsupported pointer binary op");
+    }
+}
+
+void Codegen::gen_addr(Expr* e) {
+    if (auto* v = dynamic_cast<VarRef*>(e)) {
+        VarSlot s = lookup_var(v->name);
+        emit() << "  lea -" << s.off << "(%rbp), %rax\n";
+    } else if (auto* d = dynamic_cast<DerefExpr*>(e)) {
+        gen_expr(d->operand.get());
+    } else if (auto* ix = dynamic_cast<IndexExpr*>(e)) {
+        gen_expr(ix->base.get());
+        emit() << "  push %rax\n";
+        push_depth_++;
+        gen_expr(ix->index.get());
+        emit_scale("%rax", size_of(type_of(ix->base.get()).pointee()));
+        emit() << "  pop %rcx\n";
+        push_depth_--;
+        emit() << "  add %rcx, %rax\n";
+    } else {
+        throw std::runtime_error("Codegen error: expression is not addressable");
+    }
+}
+
 // ---------- statements ----------
 
 void Codegen::gen_block(Block* b) {
@@ -250,15 +323,19 @@ void Codegen::gen_block(Block* b) {
 }
 
 void Codegen::gen_stmt(Stmt* s) {
-    if (auto* v = dynamic_cast<VarDecl*>(s)) {
+    if (auto* av = dynamic_cast<ArrayVarDecl*>(s)) {
+        Type elem = type_from_name(av->type);
+        long long bytes = ((av->length * size_of(elem) + 7) / 8) * 8;
+        allocate_var(av->name, elem.pointer_to(), static_cast<int>(bytes), true);
+    } else if (auto* v = dynamic_cast<VarDecl*>(s)) {
         Type vt = type_from_name(v->type);
         if (v->init) {
             gen_expr(v->init.get());
             emit_convert(type_of(v->init.get()), vt);
-            allocate_var(v->name);
-            emit() << "  mov %rax, -" << lookup_var(v->name) << "(%rbp)\n";
+            allocate_var(v->name, vt);
+            emit() << "  mov %rax, -" << lookup_var(v->name).off << "(%rbp)\n";
         } else {
-            allocate_var(v->name);
+            allocate_var(v->name, vt);
         }
     } else if (auto* es = dynamic_cast<ExprStmt*>(s)) {
         gen_expr(es->expr.get());
@@ -340,17 +417,6 @@ void Codegen::gen_stmt(Stmt* s) {
 // ---------- calls ----------
 
 void Codegen::gen_call(Call* call) {
-    if (call->callee == "print_str" && call->args.size() == 1) {
-        if (auto* sl = dynamic_cast<StringLit*>(call->args[0].get())) {
-            std::string lbl = add_string(sl->value);
-            emit() << "  lea " << lbl << "(%rip), %rdi\n";
-            emit() << "  mov $" << sl->value.length() << ", %rsi\n";
-            emit() << "  call print_str\n";
-            emit() << "  mov $0, %rax\n";
-            return;
-        }
-    }
-
     const FuncInfo& info = sema_.functions().at(call->callee);
     const int n = static_cast<int>(call->args.size());
     const int nstack = n > 6 ? n - 6 : 0;
@@ -401,24 +467,42 @@ void Codegen::gen_expr(Expr* e) {
         std::string lbl = add_string(sl->value);
         emit() << "  lea " << lbl << "(%rip), %rax\n";
     } else if (auto* v = dynamic_cast<VarRef*>(e)) {
-        emit() << "  mov -" << lookup_var(v->name) << "(%rbp), %rax\n";
+        emit_load_var(lookup_var(v->name));
     } else if (auto* c = dynamic_cast<CastExpr*>(e)) {
         gen_expr(c->operand.get());
         emit_convert(type_of(c->operand.get()), type_of(e));
+    } else if (auto* ad = dynamic_cast<AddrOfExpr*>(e)) {
+        gen_addr(ad->operand.get());
+    } else if (auto* d = dynamic_cast<DerefExpr*>(e)) {
+        gen_expr(d->operand.get());
+        emit_load(type_of(e));
+    } else if (auto* ix = dynamic_cast<IndexExpr*>(e)) {
+        gen_addr(ix);
+        emit_load(type_of(e));
     } else if (auto* a = dynamic_cast<Assign*>(e)) {
         gen_expr(a->value.get());
         emit_convert(type_of(a->value.get()), type_of(e));
-        emit() << "  mov %rax, -" << lookup_var(a->name) << "(%rbp)\n";
+        emit() << "  mov %rax, -" << lookup_var(a->name).off << "(%rbp)\n";
+    } else if (auto* st = dynamic_cast<StoreExpr*>(e)) {
+        Type elem = type_of(e);
+        gen_addr(st->target.get());
+        emit() << "  push %rax\n";
+        push_depth_++;
+        gen_expr(st->value.get());
+        emit_convert(type_of(st->value.get()), elem);
+        emit() << "  pop %rdx\n";
+        push_depth_--;
+        emit_store(elem);
     } else if (auto* u = dynamic_cast<Unary*>(e)) {
         gen_expr(u->operand.get());
         Type t = type_of(u->operand.get());
         if (u->op == Tok::MINUS) {
-            if (t == Type::Double) emit() << "  movabsq $0x8000000000000000, %rcx\n  xor %rcx, %rax\n";
+            if (t.is_double()) emit() << "  movabsq $0x8000000000000000, %rcx\n  xor %rcx, %rax\n";
             else emit() << "  neg %rax\n";
         } else if (u->op == Tok::TILDE) {
             emit() << "  not %rax\n";
         } else if (u->op == Tok::NOT) {
-            if (t == Type::Double) emit_to_bool_from_double();
+            if (t.is_double()) emit_to_bool_from_double();
             emit() << "  cmp $0, %rax\n  sete %al\n  movzbq %al, %rax\n";
         }
     } else if (auto* bin = dynamic_cast<Binary*>(e)) {
@@ -438,21 +522,21 @@ void Codegen::gen_expr(Expr* e) {
 
         Type lt = type_of(bin->lhs.get());
         Type rt = type_of(bin->rhs.get());
-        bool dbl = (lt == Type::Double || rt == Type::Double);
+        const bool ptr_op = lt.is_ptr() || rt.is_ptr();
+        const bool dbl = !ptr_op && (lt.is_double() || rt.is_double());
 
         gen_expr(bin->lhs.get());
-        if (dbl) emit_convert(lt, Type::Double);
+        if (dbl) emit_convert(lt, ty::Double);
         emit() << "  push %rax\n";
         push_depth_++;
         gen_expr(bin->rhs.get());
-        if (dbl) emit_convert(rt, Type::Double);
+        if (dbl) emit_convert(rt, ty::Double);
         emit() << "  pop %rcx\n";
         push_depth_--;
 
-        if (dbl) {
-            gen_double_binary(bin->op);
-            return;
-        }
+        if (dbl) { gen_double_binary(bin->op); return; }
+        if (ptr_op) { gen_pointer_binary(bin->op, lt, rt); return; }
+
         switch (bin->op) {
             case Tok::PLUS:  emit() << "  add %rcx, %rax\n"; break;
             case Tok::MINUS: emit() << "  sub %rax, %rcx\n  mov %rcx, %rax\n"; break;

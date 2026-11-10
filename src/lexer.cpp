@@ -44,7 +44,7 @@ std::vector<Token> Lexer::tokenize() {
         {"if", Tok::KW_IF}, {"else", Tok::KW_ELSE},
         {"while", Tok::KW_WHILE}, {"for", Tok::KW_FOR},
         {"return", Tok::KW_RETURN}, {"break", Tok::KW_BREAK},
-        {"continue", Tok::KW_CONTINUE},
+        {"continue", Tok::KW_CONTINUE}, {"sizeof", Tok::KW_SIZEOF},
         {"true", Tok::KW_TRUE}, {"false", Tok::KW_FALSE},
     };
     while (true) {
@@ -96,6 +96,8 @@ std::vector<Token> Lexer::tokenize() {
                     char esc = advance();
                     if (esc == 'n') s += '\n';
                     else if (esc == 't') s += '\t';
+                    else if (esc == 'r') s += '\r';
+                    else if (esc == '0') s += '\0';
                     else s += esc;
                 } else {
                     s += advance();
@@ -109,7 +111,7 @@ std::vector<Token> Lexer::tokenize() {
             char val = advance();
             if (val == '\\') {
                 char esc = advance();
-                val = esc == 'n' ? '\n' : esc == 't' ? '\t' : esc == '0' ? '\0' : esc;
+                val = esc == 'n' ? '\n' : esc == 't' ? '\t' : esc == 'r' ? '\r' : esc == '0' ? '\0' : esc;
             }
             if (peek() != '\'') throw std::runtime_error("unterminated char at line " + std::to_string(l));
             advance();
@@ -130,9 +132,7 @@ std::vector<Token> Lexer::tokenize() {
                 case '<': mk(match('=') ? Tok::LE : Tok::LT); break;
                 case '>': mk(match('=') ? Tok::GE : Tok::GT); break;
                 case '~': mk(Tok::TILDE); break;
-                case '&':
-                    if (!match('&')) throw std::runtime_error("unexpected '&' at line " + std::to_string(l));
-                    mk(Tok::AND); break;
+                case '&': mk(match('&') ? Tok::AND : Tok::AMP); break;
                 case '|':
                     if (!match('|')) throw std::runtime_error("unexpected '|' at line " + std::to_string(l));
                     mk(Tok::OR); break;
@@ -140,6 +140,8 @@ std::vector<Token> Lexer::tokenize() {
                 case ')': mk(Tok::RPAREN); break;
                 case '{': mk(Tok::LBRACE); break;
                 case '}': mk(Tok::RBRACE); break;
+                case '[': mk(Tok::LBRACKET); break;
+                case ']': mk(Tok::RBRACKET); break;
                 case ';': mk(Tok::SEMICOLON); break;
                 case ',': mk(Tok::COMMA); break;
                 default:

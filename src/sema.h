@@ -6,12 +6,13 @@
 #include <vector>
 
 struct VarInfo {
-    Type type;
-    int stack_offset;
+    Type type;                 // for arrays: pointer to the element type (decayed)
+    bool is_array = false;
+    long long array_len = 0;
 };
 
 struct FuncInfo {
-    Type ret = Type::Void;
+    Type ret = ty::Void;
     std::vector<Type> params;
     bool defined = false;
 };
@@ -31,20 +32,24 @@ private:
     std::vector<std::unordered_map<std::string, VarInfo>> scopes_;
     FuncMap functions_;
     TypeMap types_;
-    int current_offset_ = 0;
     int loop_depth_ = 0;
-    Type current_ret_ = Type::Void;
+    Type current_ret_ = ty::Void;
     std::string current_function_;
 
     void push_scope();
     void pop_scope();
-    void declare_var(const std::string& name, Type type, int line);
+    void declare_var(const std::string& name, Type type, int line, bool is_array = false, long long len = 0);
     VarInfo* lookup_var(const std::string& name, int line);
     void declare_function(FuncDecl& fn);
     Type note(const Expr* e, Type t) { types_[e] = t; return t; }
+
     void require_value(Type t, int line);
+    void check_object_type(Type t, const char* what, const std::string& name, int line);
+    bool convertible(Type from, Type to, const Expr* e) const;
+    void require_convertible(Type from, Type to, const Expr* e, int line);
 
     void check_stmt(Stmt* s);
     Type check_expr(Expr* e);
+    Type check_binary(Binary* b);
     void check_block(Block* b);
 };

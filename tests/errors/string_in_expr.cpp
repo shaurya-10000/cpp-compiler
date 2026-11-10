@@ -1,2 +1,2 @@
-// ERROR: string literals can only be used as print_str arguments
+// ERROR: cannot convert 'char*' to 'int'
 int main() { int x = "hi"; return 0; }

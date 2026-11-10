@@ -1,6 +1,7 @@
 #pragma once
 #include "ast.h"
 #include "tokens.h"
+#include <string>
 #include <vector>
 
 class Parser {
@@ -17,6 +18,10 @@ private:
     bool match(Tok t);
     const Token& expect(Tok t, const char* what);
     [[noreturn]] void error(const std::string& msg) const;
+
+    bool is_type_kw(Tok t) const;
+    bool looks_like_cast() const;
+    std::string parse_type();
 
     std::unique_ptr<FuncDecl> parse_function();
     std::unique_ptr<Block> parse_block();
@@ -39,4 +44,3 @@ private:
     ExprPtr parse_postfix();
     ExprPtr parse_primary();
 };
-

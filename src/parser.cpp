@@ -1,5 +1,6 @@
 #include "parser.h"
 #include "ast_ext.h"
+#include "types.h"
 #include <stdexcept>
 
 Parser::Parser(std::vector<Token> toks) : toks_(std::move(toks)) {}
@@ -20,6 +21,27 @@ void Parser::error(const std::string& msg) const {
                              ": " + msg + " (got '" + peek().text + "')");
 }
 
+bool Parser::is_type_kw(Tok t) const {
+    return t == Tok::KW_INT || t == Tok::KW_BOOL || t == Tok::KW_CHAR ||
+           t == Tok::KW_DOUBLE || t == Tok::KW_VOID;
+}
+
+// type := (int|bool|char|double|void) '*'*      returns e.g. "char*"
+std::string Parser::parse_type() {
+    if (!is_type_kw(peek().type)) error("expected type");
+    std::string name = advance().text;
+    while (match(Tok::STAR)) name += '*';
+    return name;
+}
+
+// '(' type '*'* ')'
+bool Parser::looks_like_cast() const {
+    if (!check(Tok::LPAREN) || !is_type_kw(peek(1).type)) return false;
+    int k = 2;
+    while (peek(k).type == Tok::STAR) k++;
+    return peek(k).type == Tok::RPAREN;
+}
+
 Program Parser::parse() {
     Program p;
     while (!check(Tok::END)) {
@@ -31,30 +53,22 @@ Program Parser::parse() {
 std::unique_ptr<FuncDecl> Parser::parse_function() {
     auto fn = std::make_unique<FuncDecl>();
     fn->line = peek().line;
-    
-    // Type
-    if (!match(Tok::KW_INT) && !match(Tok::KW_VOID) && !match(Tok::KW_BOOL) && !match(Tok::KW_CHAR) && !match(Tok::KW_DOUBLE))
-        error("expected return type");
-    fn->return_type = toks_[pos_-1].text;
 
-    // Name
+    fn->return_type = parse_type();
     fn->name = expect(Tok::IDENT, "function name").text;
-    
-    // Params
+
     expect(Tok::LPAREN, "'('");
     if (!check(Tok::RPAREN)) {
         do {
             Param p;
-            if (!match(Tok::KW_INT) && !match(Tok::KW_BOOL) && !match(Tok::KW_CHAR) && !match(Tok::KW_DOUBLE))
-                error("expected parameter type");
-            p.type = toks_[pos_-1].text;
+            p.type = parse_type();
             p.name = expect(Tok::IDENT, "parameter name").text;
             fn->params.push_back(p);
         } while (match(Tok::COMMA));
     }
     expect(Tok::RPAREN, "')'");
 
-    if (match(Tok::SEMICOLON)) return fn; // prototype
+    if (match(Tok::SEMICOLON)) return fn;   // prototype
     fn->body = parse_block();
     return fn;
 }
@@ -70,32 +84,30 @@ std::unique_ptr<Block> Parser::parse_block() {
 }
 
 StmtPtr Parser::parse_stmt() {
-    if ((check(Tok::KW_INT) || check(Tok::KW_BOOL) || check(Tok::KW_CHAR) || check(Tok::KW_DOUBLE))) return parse_var_decl();
-        if (check(Tok::KW_IF)) return parse_if();
+    if (is_type_kw(peek().type)) return parse_var_decl();
+    if (check(Tok::KW_IF)) return parse_if();
     if (check(Tok::KW_WHILE)) return parse_while();
     if (check(Tok::KW_FOR)) return parse_for();
-    if (check(Tok::KW_BREAK)) { 
-        advance(); 
-        auto b = std::make_unique<Break>(); 
-        b->line = toks_[pos_-1].line; 
+    if (check(Tok::KW_BREAK)) {
+        advance();
+        auto b = std::make_unique<Break>();
+        b->line = toks_[pos_ - 1].line;
         expect(Tok::SEMICOLON, "';'");
-        return b; 
+        return b;
     }
-    if (check(Tok::KW_CONTINUE)) { 
-        advance(); 
-        auto c = std::make_unique<Continue>(); 
-        c->line = toks_[pos_-1].line; 
+    if (check(Tok::KW_CONTINUE)) {
+        advance();
+        auto c = std::make_unique<Continue>();
+        c->line = toks_[pos_ - 1].line;
         expect(Tok::SEMICOLON, "';'");
-        return c; 
+        return c;
     }
     if (check(Tok::KW_RETURN)) return parse_return();
     if (check(Tok::LBRACE)) {
         auto b = parse_block();
-        // Block is a statement, but in this simple AST we just return it
-        return b; 
+        return b;
     }
 
-    // ExprStmt
     auto s = std::make_unique<ExprStmt>();
     s->line = peek().line;
     s->expr = parse_expr();
@@ -104,11 +116,27 @@ StmtPtr Parser::parse_stmt() {
 }
 
 StmtPtr Parser::parse_var_decl() {
+    int line = peek().line;
+    std::string type = parse_type();
+    std::string name = expect(Tok::IDENT, "variable name").text;
+
+    if (match(Tok::LBRACKET)) {
+        const Token& len = expect(Tok::INT_LIT, "array size");
+        auto a = std::make_unique<ArrayVarDecl>();
+        a->line = line;
+        a->type = type;
+        a->name = name;
+        a->length = len.int_val;
+        expect(Tok::RBRACKET, "']'");
+        if (check(Tok::ASSIGN)) error("array initializers are not supported yet");
+        expect(Tok::SEMICOLON, "';'");
+        return a;
+    }
+
     auto s = std::make_unique<VarDecl>();
-    s->line = peek().line;
-    advance(); // type keyword
-    s->type = toks_[pos_-1].text;
-    s->name = expect(Tok::IDENT, "variable name").text;
+    s->line = line;
+    s->type = type;
+    s->name = name;
     if (match(Tok::ASSIGN)) {
         s->init = parse_expr();
     }
@@ -118,7 +146,7 @@ StmtPtr Parser::parse_var_decl() {
 
 StmtPtr Parser::parse_if() {
     auto s = std::make_unique<If>();
-    s->line = advance().line; // 'if'
+    s->line = advance().line;
     expect(Tok::LPAREN, "'('");
     s->cond = parse_expr();
     expect(Tok::RPAREN, "')'");
@@ -138,7 +166,7 @@ StmtPtr Parser::parse_if() {
 
 StmtPtr Parser::parse_while() {
     auto s = std::make_unique<While>();
-    s->line = advance().line; // 'while'
+    s->line = advance().line;
     expect(Tok::LPAREN, "'('");
     s->cond = parse_expr();
     expect(Tok::RPAREN, "')'");
@@ -148,13 +176,12 @@ StmtPtr Parser::parse_while() {
 
 StmtPtr Parser::parse_for() {
     auto s = std::make_unique<For>();
-    s->line = advance().line; // 'for'
+    s->line = advance().line;
     expect(Tok::LPAREN, "'('");
-    
-    // Init
+
     if (check(Tok::SEMICOLON)) {
         advance();
-    } else if ((check(Tok::KW_INT) || check(Tok::KW_BOOL) || check(Tok::KW_CHAR) || check(Tok::KW_DOUBLE))) {
+    } else if (is_type_kw(peek().type)) {
         s->init = parse_var_decl();
     } else {
         auto e = std::make_unique<ExprStmt>();
@@ -164,13 +191,11 @@ StmtPtr Parser::parse_for() {
         s->init = std::move(e);
     }
 
-    // Cond
     if (!check(Tok::SEMICOLON)) {
         s->cond = parse_expr();
     }
     expect(Tok::SEMICOLON, "';'");
 
-    // Step
     if (!check(Tok::RPAREN)) {
         s->step = parse_expr();
     }
@@ -182,7 +207,7 @@ StmtPtr Parser::parse_for() {
 
 StmtPtr Parser::parse_return() {
     auto s = std::make_unique<Return>();
-    s->line = advance().line; // 'return'
+    s->line = advance().line;
     if (!check(Tok::SEMICOLON)) {
         s->value = parse_expr();
     }
@@ -196,13 +221,22 @@ ExprPtr Parser::parse_expr() { return parse_assign(); }
 ExprPtr Parser::parse_assign() {
     auto lhs = parse_or();
     if (match(Tok::ASSIGN)) {
-        auto* vr = dynamic_cast<VarRef*>(lhs.get());
-        if (!vr) error("invalid assignment target");
-        auto a = std::make_unique<Assign>();
-        a->line = lhs->line;
-        a->name = vr->name;
-        a->value = parse_assign(); // right assoc
-        return a;
+        int line = lhs->line;
+        if (auto* vr = dynamic_cast<VarRef*>(lhs.get())) {
+            auto a = std::make_unique<Assign>();
+            a->line = line;
+            a->name = vr->name;
+            a->value = parse_assign();   // right assoc
+            return a;
+        }
+        if (dynamic_cast<DerefExpr*>(lhs.get()) || dynamic_cast<IndexExpr*>(lhs.get())) {
+            auto st = std::make_unique<StoreExpr>();
+            st->line = line;
+            st->target = std::move(lhs);
+            st->value = parse_assign();
+            return st;
+        }
+        error("invalid assignment target");
     }
     return lhs;
 }
@@ -273,15 +307,36 @@ ExprPtr Parser::parse_multiplicative() {
 }
 
 ExprPtr Parser::parse_unary() {
-    if (check(Tok::LPAREN) && peek(2).type == Tok::RPAREN &&
-        (peek(1).type == Tok::KW_INT || peek(1).type == Tok::KW_BOOL ||
-         peek(1).type == Tok::KW_CHAR || peek(1).type == Tok::KW_DOUBLE)) {
+    if (check(Tok::KW_SIZEOF)) {
+        int line = advance().line;
+        expect(Tok::LPAREN, "'('");
+        Type t = type_from_name(parse_type());
+        expect(Tok::RPAREN, "')'");
+        if (t.is_void()) error("sizeof(void) is not allowed");
+        auto lit = std::make_unique<IntLit>();
+        lit->line = line;
+        lit->value = size_of(t);
+        return lit;
+    }
+    if (looks_like_cast()) {
         auto cast = std::make_unique<CastExpr>();
-        cast->line = advance().line;
-        cast->type = advance().text;
-        advance(); // ')'
+        cast->line = advance().line;   // '('
+        cast->type = parse_type();
+        expect(Tok::RPAREN, "')'");
         cast->operand = parse_unary();
         return cast;
+    }
+    if (check(Tok::STAR)) {
+        auto d = std::make_unique<DerefExpr>();
+        d->line = advance().line;
+        d->operand = parse_unary();
+        return d;
+    }
+    if (check(Tok::AMP)) {
+        auto a = std::make_unique<AddrOfExpr>();
+        a->line = advance().line;
+        a->operand = parse_unary();
+        return a;
     }
     if (check(Tok::MINUS) || check(Tok::NOT) || check(Tok::TILDE)) {
         Tok op = advance().type;
@@ -295,18 +350,30 @@ ExprPtr Parser::parse_unary() {
 
 ExprPtr Parser::parse_postfix() {
     auto e = parse_primary();
-    while (check(Tok::LPAREN)) {
-        auto* vr = dynamic_cast<VarRef*>(e.get());
-        if (!vr) error("call target must be a function name");
-        advance();
-        auto call = std::make_unique<Call>();
-        call->line = e->line;
-        call->callee = vr->name;
-        if (!check(Tok::RPAREN)) {
-            do { call->args.push_back(parse_expr()); } while (match(Tok::COMMA));
+    while (true) {
+        if (check(Tok::LPAREN)) {
+            auto* vr = dynamic_cast<VarRef*>(e.get());
+            if (!vr) error("call target must be a function name");
+            advance();
+            auto call = std::make_unique<Call>();
+            call->line = e->line;
+            call->callee = vr->name;
+            if (!check(Tok::RPAREN)) {
+                do { call->args.push_back(parse_expr()); } while (match(Tok::COMMA));
+            }
+            expect(Tok::RPAREN, "')'");
+            e = std::move(call);
+        } else if (check(Tok::LBRACKET)) {
+            advance();
+            auto ix = std::make_unique<IndexExpr>();
+            ix->line = e->line;
+            ix->base = std::move(e);
+            ix->index = parse_expr();
+            expect(Tok::RBRACKET, "']'");
+            e = std::move(ix);
+        } else {
+            break;
         }
-        expect(Tok::RPAREN, "')'");
-        e = std::move(call);
     }
     return e;
 }
@@ -345,8 +412,7 @@ ExprPtr Parser::parse_primary() {
         case Tok::STRING_LIT: {
             auto s = std::make_unique<StringLit>(); s->line = line; s->value = t.text;
             advance(); return s;
-        }        default: error("expected expression"); return nullptr;
+        }
+        default: error("expected expression"); return nullptr;
     }
 }
-
-
