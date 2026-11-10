@@ -1,6 +1,11 @@
 #include "sema.h"
-#include <iostream>
 #include <stdexcept>
+
+namespace {
+[[noreturn]] void fail(int line, const std::string& msg) {
+    throw std::runtime_error("Sema error line " + std::to_string(line) + ": " + msg);
+}
+}
 
 Sema::Sema() { push_scope(); }
 
@@ -9,34 +14,58 @@ void Sema::pop_scope() { scopes_.pop_back(); }
 
 void Sema::declare_var(const std::string& name, const std::string& type, int line) {
     auto& scope = scopes_.back();
-    if (scope.count(name)) {
-        throw std::runtime_error("Sema error line " + std::to_string(line) + ": variable '" + name + "' already declared in this scope.");
-    }
-    current_offset_ += 8; // All vars are 8-byte slots for simplicity in this version
+    if (scope.count(name)) fail(line, "variable '" + name + "' already declared in this scope");
+    current_offset_ += 8;
     scope[name] = {type, current_offset_};
 }
 
 VarInfo* Sema::lookup_var(const std::string& name, int line) {
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
-        if (it->count(name)) return &(*it)[name];
+        auto found = it->find(name);
+        if (found != it->end()) return &found->second;
     }
-    throw std::runtime_error("Sema error line " + std::to_string(line) + ": undeclared variable '" + name + "'.");
+    fail(line, "undeclared variable '" + name + "'");
+}
+
+void Sema::declare_function(FuncDecl& fn) {
+    if (fn.name == "print_int" || fn.name == "print_str")
+        fail(fn.line, "cannot redefine built-in function '" + fn.name + "'");
+
+    FuncInfo info;
+    info.return_type = fn.return_type;
+    for (auto& p : fn.params) info.param_types.push_back(p.type);
+    info.defined = (fn.body != nullptr);
+
+    auto it = functions_.find(fn.name);
+    if (it == functions_.end()) {
+        functions_[fn.name] = std::move(info);
+        return;
+    }
+    FuncInfo& prev = it->second;
+    if (prev.return_type != info.return_type || prev.param_types != info.param_types)
+        fail(fn.line, "conflicting declaration of '" + fn.name + "'");
+    if (prev.defined && info.defined)
+        fail(fn.line, "redefinition of '" + fn.name + "'");
+    if (info.defined) prev.defined = true;
 }
 
 void Sema::analyze(Program& program) {
+    functions_.clear();
     for (auto& fn : program.functions) {
+        declare_function(*fn);
+        if (!fn->body) continue;
+
         current_function_ = fn->name;
         current_offset_ = 0;
+        loop_depth_ = 0;
         scopes_.clear();
         push_scope();
-
         for (auto& p : fn->params) declare_var(p.name, p.type, fn->line);
-        
         check_block(fn->body.get());
-        
-        // Attach total stack size to the block for codegen (hack: store in name for now or add a field)
-        // We'll just re-walk in codegen. For now, this is just a validation pass.
     }
+    auto m = functions_.find("main");
+    if (m == functions_.end() || !m->second.defined)
+        throw std::runtime_error("Sema error: no 'main' function defined");
 }
 
 void Sema::check_block(Block* b) {
@@ -49,8 +78,8 @@ void Sema::check_stmt(Stmt* s) {
     if (auto* v = dynamic_cast<VarDecl*>(s)) {
         if (v->init) check_expr(v->init.get());
         declare_var(v->name, v->type, v->line);
-    } else if (auto* e = dynamic_cast<ExprStmt*>(s)) {
-        check_expr(e->expr.get());
+    } else if (auto* es = dynamic_cast<ExprStmt*>(s)) {
+        check_expr(es->expr.get());
     } else if (auto* r = dynamic_cast<Return*>(s)) {
         if (r->value) check_expr(r->value.get());
     } else if (auto* i = dynamic_cast<If*>(s)) {
@@ -72,28 +101,42 @@ void Sema::check_stmt(Stmt* s) {
         loop_depth_--;
         pop_scope();
     } else if (dynamic_cast<Break*>(s) != nullptr) {
-        if (loop_depth_ == 0) throw std::runtime_error("Sema error line " + std::to_string(s->line) + ": 'break' outside of loop");
+        if (loop_depth_ == 0) fail(s->line, "'break' outside of loop");
     } else if (dynamic_cast<Continue*>(s) != nullptr) {
-        if (loop_depth_ == 0) throw std::runtime_error("Sema error line " + std::to_string(s->line) + ": 'continue' outside of loop");
-    } else if (auto* b = dynamic_cast<Block*>(s)) {
-        check_block(b);
+        if (loop_depth_ == 0) fail(s->line, "'continue' outside of loop");
+    } else if (auto* blk = dynamic_cast<Block*>(s)) {
+        check_block(blk);
     }
 }
 
 void Sema::check_expr(Expr* e) {
-    if (dynamic_cast<IntLit*>(e) || dynamic_cast<CharLit*>(e) || dynamic_cast<BoolLit*>(e)) return;
     if (auto* v = dynamic_cast<VarRef*>(e)) {
         lookup_var(v->name, v->line);
     } else if (auto* u = dynamic_cast<Unary*>(e)) {
         check_expr(u->operand.get());
-    } else if (auto* b = dynamic_cast<Binary*>(e)) {
-        check_expr(b->lhs.get());
-        check_expr(b->rhs.get());
+    } else if (auto* bin = dynamic_cast<Binary*>(e)) {
+        check_expr(bin->lhs.get());
+        check_expr(bin->rhs.get());
     } else if (auto* a = dynamic_cast<Assign*>(e)) {
         lookup_var(a->name, a->line);
         check_expr(a->value.get());
-    } else if (auto* c = dynamic_cast<Call*>(e)) {
-        // Note: In a full compiler we'd check args against a function table here.
-        for (auto& arg : c->args) check_expr(arg.get());
+    } else if (auto* call = dynamic_cast<Call*>(e)) {
+        if (call->callee == "print_int") {
+            if (call->args.size() != 1)
+                fail(call->line, "'print_int' expects 1 argument, got " + std::to_string(call->args.size()));
+        } else if (call->callee == "print_str") {
+            if (call->args.size() != 1 || dynamic_cast<StringLit*>(call->args[0].get()) == nullptr)
+                fail(call->line, "'print_str' expects a single string literal argument");
+        } else {
+            auto it = functions_.find(call->callee);
+            if (it == functions_.end())
+                fail(call->line, "call to undeclared function '" + call->callee + "'");
+            size_t want = it->second.param_types.size();
+            if (want != call->args.size())
+                fail(call->line, "function '" + call->callee + "' expects " + std::to_string(want) +
+                                 " arguments, got " + std::to_string(call->args.size()));
+        }
+        for (auto& arg : call->args) check_expr(arg.get());
     }
+    // literals need no checking
 }

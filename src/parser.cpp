@@ -53,6 +53,7 @@ std::unique_ptr<FuncDecl> Parser::parse_function() {
     }
     expect(Tok::RPAREN, "')'");
 
+    if (match(Tok::SEMICOLON)) return fn; // prototype
     fn->body = parse_block();
     return fn;
 }
