@@ -90,7 +90,7 @@ void Codegen::generate(Program& program) {
         out_ << fn->name << ":\n";
         out_ << "  push %rbp\n";
         out_ << "  mov %rsp, %rbp\n";
-        out_ << "  sub $256, %rsp\n"; 
+        out_ << "  sub $.Lframe_" << fn->name << ", %rsp\n"; 
 
         const char* regs[] = {"%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
         for (size_t i = 0; i < fn->params.size() && i < 6; ++i) {
@@ -99,6 +99,8 @@ void Codegen::generate(Program& program) {
         }
 
         gen_block(fn->body.get());
+        int frame_size = ((current_offset_ + 15) / 16) * 16;
+        out_ << ".set .Lframe_" << fn->name << ", " << frame_size << "\n";
 
         out_ << "  mov $0, %rax\n"; 
         out_ << "  leave\n";
@@ -242,6 +244,20 @@ void Codegen::gen_expr(Expr* e) {
         else if (u->op == Tok::TILDE) out_ << "  not %rax\n";
         else if (u->op == Tok::NOT) out_ << "  cmp $0, %rax\n  sete %al\n  movzbq %al, %rax\n";
     } else if (auto* b = dynamic_cast<Binary*>(e)) {
+        if (b->op == Tok::AND || b->op == Tok::OR) {
+            std::string short_lbl = new_label();
+            std::string end_lbl = new_label();
+            gen_expr(b->lhs.get());
+            out_ << "  cmp $0, %rax\n";
+            out_ << (b->op == Tok::AND ? "  je " : "  jne ") << short_lbl << "\n";
+            gen_expr(b->rhs.get());
+            out_ << "  cmp $0, %rax\n  setne %al\n  movzbq %al, %rax\n";
+            out_ << "  jmp " << end_lbl << "\n";
+            out_ << short_lbl << ":\n";
+            out_ << "  mov $" << (b->op == Tok::AND ? 0 : 1) << ", %rax\n";
+            out_ << end_lbl << ":\n";
+            return;
+        }
         gen_expr(b->lhs.get());
         out_ << "  push %rax\n";
         gen_expr(b->rhs.get());

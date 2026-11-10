@@ -6,7 +6,7 @@ on:
     branches: [ main ]
 jobs:
   build:
-    name: Build on Ubuntu
+    name: Build and test on Ubuntu
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,20 +14,5 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build --config Release
-      - name: Smoke test
-        run: |
-          set -euo pipefail
-          cat > smoke.cpp <<'EOF'
-          int main() {
-              print_str("Hello from Phase 4!\n");
-              print_int(42 + 8);
-              return 0;
-          }
-          EOF
-          ./build/minicc --compile smoke.cpp > smoke.s
-          gcc smoke.s -o smoke
-          ./smoke > out.txt
-          printf 'Hello from Phase 4!\n50\n' > expected.txt
-          sed -i 's/\r$//' out.txt expected.txt
-          diff -u expected.txt out.txt
-          echo "Output matched exactly!"
+      - name: Run test suite
+        run: bash tests/run_tests.sh ./build/minicc

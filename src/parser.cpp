@@ -122,7 +122,14 @@ StmtPtr Parser::parse_if() {
     expect(Tok::RPAREN, "')'");
     s->then_body = parse_block();
     if (match(Tok::KW_ELSE)) {
-        s->else_body = parse_block();
+        if (check(Tok::KW_IF)) {
+            auto wrapper = std::make_unique<Block>();
+            wrapper->line = peek().line;
+            wrapper->stmts.push_back(parse_if());
+            s->else_body = std::move(wrapper);
+        } else {
+            s->else_body = parse_block();
+        }
     }
     return s;
 }

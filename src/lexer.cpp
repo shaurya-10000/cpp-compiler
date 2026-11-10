@@ -38,7 +38,7 @@ std::vector<Token> Lexer::tokenize() {
         {"if", Tok::KW_IF}, {"else", Tok::KW_ELSE},
         {"while", Tok::KW_WHILE}, {"for", Tok::KW_FOR},
         {"return", Tok::KW_RETURN}, {"break", Tok::KW_BREAK},
-        {"continue", Tok::KW_CONTINUE}, {"break", Tok::KW_BREAK},
+        {"continue", Tok::KW_CONTINUE},
         {"true", Tok::KW_TRUE}, {"false", Tok::KW_FALSE},
     };
     while (true) {

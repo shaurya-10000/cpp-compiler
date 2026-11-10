@@ -18,6 +18,7 @@ private:
     std::vector<std::unordered_map<std::string, VarInfo>> scopes_;
     int current_offset_ = 0; // tracks stack space per function
     std::string current_function_;
+    int loop_depth_ = 0;
 
     void push_scope();
     void pop_scope();

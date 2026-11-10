@@ -59,7 +59,22 @@ void Sema::check_stmt(Stmt* s) {
         if (i->else_body) check_block(i->else_body.get());
     } else if (auto* w = dynamic_cast<While*>(s)) {
         check_expr(w->cond.get());
+        loop_depth_++;
         check_block(w->body.get());
+        loop_depth_--;
+    } else if (auto* f = dynamic_cast<For*>(s)) {
+        push_scope();
+        if (f->init) check_stmt(f->init.get());
+        if (f->cond) check_expr(f->cond.get());
+        if (f->step) check_expr(f->step.get());
+        loop_depth_++;
+        check_block(f->body.get());
+        loop_depth_--;
+        pop_scope();
+    } else if (dynamic_cast<Break*>(s) != nullptr) {
+        if (loop_depth_ == 0) throw std::runtime_error("Sema error line " + std::to_string(s->line) + ": 'break' outside of loop");
+    } else if (dynamic_cast<Continue*>(s) != nullptr) {
+        if (loop_depth_ == 0) throw std::runtime_error("Sema error line " + std::to_string(s->line) + ": 'continue' outside of loop");
     } else if (auto* b = dynamic_cast<Block*>(s)) {
         check_block(b);
     }
