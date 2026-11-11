@@ -42,9 +42,10 @@ std::vector<Token> Lexer::tokenize() {
         {"int", Tok::KW_INT}, {"bool", Tok::KW_BOOL}, {"char", Tok::KW_CHAR},
         {"void", Tok::KW_VOID}, {"double", Tok::KW_DOUBLE},
         {"if", Tok::KW_IF}, {"else", Tok::KW_ELSE},
-        {"while", Tok::KW_WHILE}, {"for", Tok::KW_FOR},
+        {"while", Tok::KW_WHILE}, {"for", Tok::KW_FOR}, {"do", Tok::KW_DO},
         {"return", Tok::KW_RETURN}, {"break", Tok::KW_BREAK},
         {"continue", Tok::KW_CONTINUE}, {"sizeof", Tok::KW_SIZEOF},
+        {"struct", Tok::KW_STRUCT},
         {"true", Tok::KW_TRUE}, {"false", Tok::KW_FALSE},
     };
     while (true) {
@@ -118,24 +119,36 @@ std::vector<Token> Lexer::tokenize() {
             out.push_back(Token{ Tok::CHAR_LIT, std::string(1, val), 0, val, l, c });
         } else {
             char first = advance();
+            const size_t start = pos_ - 1;
             auto mk = [&](Tok t) {
-                out.push_back(Token{ t, std::string(1, first), 0, 0, l, c });
+                out.push_back(Token{ t, src_.substr(start, pos_ - start), 0, 0, l, c });
             };
             switch (first) {
-                case '+': mk(Tok::PLUS); break;
-                case '-': mk(Tok::MINUS); break;
-                case '*': mk(Tok::STAR); break;
-                case '/': mk(Tok::SLASH); break;
-                case '%': mk(Tok::PERCENT); break;
+                case '+': mk(match('+') ? Tok::PLUSPLUS : match('=') ? Tok::PLUS_ASSIGN : Tok::PLUS); break;
+                case '-':
+                    mk(match('-') ? Tok::MINUSMINUS : match('>') ? Tok::ARROW
+                       : match('=') ? Tok::MINUS_ASSIGN : Tok::MINUS);
+                    break;
+                case '*': mk(match('=') ? Tok::STAR_ASSIGN : Tok::STAR); break;
+                case '/': mk(match('=') ? Tok::SLASH_ASSIGN : Tok::SLASH); break;
+                case '%': mk(match('=') ? Tok::PERCENT_ASSIGN : Tok::PERCENT); break;
                 case '=': mk(match('=') ? Tok::EQ : Tok::ASSIGN); break;
                 case '!': mk(match('=') ? Tok::NE : Tok::NOT); break;
-                case '<': mk(match('=') ? Tok::LE : Tok::LT); break;
-                case '>': mk(match('=') ? Tok::GE : Tok::GT); break;
+                case '<':
+                    mk(match('<') ? (match('=') ? Tok::SHL_ASSIGN : Tok::SHL)
+                                  : (match('=') ? Tok::LE : Tok::LT));
+                    break;
+                case '>':
+                    mk(match('>') ? (match('=') ? Tok::SHR_ASSIGN : Tok::SHR)
+                                  : (match('=') ? Tok::GE : Tok::GT));
+                    break;
+                case '&': mk(match('&') ? Tok::AND : match('=') ? Tok::AMP_ASSIGN : Tok::AMP); break;
+                case '|': mk(match('|') ? Tok::OR : match('=') ? Tok::PIPE_ASSIGN : Tok::PIPE); break;
+                case '^': mk(match('=') ? Tok::CARET_ASSIGN : Tok::CARET); break;
                 case '~': mk(Tok::TILDE); break;
-                case '&': mk(match('&') ? Tok::AND : Tok::AMP); break;
-                case '|':
-                    if (!match('|')) throw std::runtime_error("unexpected '|' at line " + std::to_string(l));
-                    mk(Tok::OR); break;
+                case '?': mk(Tok::QUESTION); break;
+                case ':': mk(Tok::COLON); break;
+                case '.': mk(Tok::DOT); break;
                 case '(': mk(Tok::LPAREN); break;
                 case ')': mk(Tok::RPAREN); break;
                 case '{': mk(Tok::LBRACE); break;

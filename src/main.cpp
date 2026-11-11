@@ -51,9 +51,9 @@ int main(int argc, char** argv) {
                                   std::make_move_iterator(prelude.functions.end()));
 
             Sema sema;
-            sema.analyze(prog);
+            sema.analyze(prog, p.globals());
             Codegen codegen(std::cout, sema);
-            codegen.generate(prog);
+            codegen.generate(prog, p.globals());
             return 0;
         }
     } catch (const std::exception& e) {

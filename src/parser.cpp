@@ -3,6 +3,34 @@
 #include "types.h"
 #include <stdexcept>
 
+namespace {
+const std::vector<std::vector<Tok>>& binary_levels() {
+    static const std::vector<std::vector<Tok>> levels = {
+        {Tok::OR}, {Tok::AND}, {Tok::PIPE}, {Tok::CARET}, {Tok::AMP},
+        {Tok::EQ, Tok::NE}, {Tok::LT, Tok::GT, Tok::LE, Tok::GE},
+        {Tok::SHL, Tok::SHR}, {Tok::PLUS, Tok::MINUS},
+        {Tok::STAR, Tok::SLASH, Tok::PERCENT},
+    };
+    return levels;
+}
+
+bool compound_base(Tok t, Tok& base) {
+    switch (t) {
+        case Tok::PLUS_ASSIGN:    base = Tok::PLUS; return true;
+        case Tok::MINUS_ASSIGN:   base = Tok::MINUS; return true;
+        case Tok::STAR_ASSIGN:    base = Tok::STAR; return true;
+        case Tok::SLASH_ASSIGN:   base = Tok::SLASH; return true;
+        case Tok::PERCENT_ASSIGN: base = Tok::PERCENT; return true;
+        case Tok::AMP_ASSIGN:     base = Tok::AMP; return true;
+        case Tok::PIPE_ASSIGN:    base = Tok::PIPE; return true;
+        case Tok::CARET_ASSIGN:   base = Tok::CARET; return true;
+        case Tok::SHL_ASSIGN:     base = Tok::SHL; return true;
+        case Tok::SHR_ASSIGN:     base = Tok::SHR; return true;
+        default: return false;
+    }
+}
+}
+
 Parser::Parser(std::vector<Token> toks) : toks_(std::move(toks)) {}
 
 const Token& Parser::peek(int off) const {
@@ -25,37 +53,160 @@ bool Parser::is_type_kw(Tok t) const {
     return t == Tok::KW_INT || t == Tok::KW_BOOL || t == Tok::KW_CHAR ||
            t == Tok::KW_DOUBLE || t == Tok::KW_VOID;
 }
+bool Parser::is_type_start() const { return is_type_kw(peek().type) || check(Tok::KW_STRUCT); }
 
-// type := (int|bool|char|double|void) '*'*      returns e.g. "char*"
+bool Parser::is_lvalue(const Expr* e) const {
+    return dynamic_cast<const VarRef*>(e) != nullptr || dynamic_cast<const DerefExpr*>(e) != nullptr ||
+           dynamic_cast<const IndexExpr*>(e) != nullptr || dynamic_cast<const MemberExpr*>(e) != nullptr;
+}
+
+// type := (int|bool|char|double|void | struct Name) '*'*     e.g. "char*", "struct Node*"
 std::string Parser::parse_type() {
-    if (!is_type_kw(peek().type)) error("expected type");
-    std::string name = advance().text;
+    std::string name;
+    if (check(Tok::KW_STRUCT)) {
+        advance();
+        std::string sn = expect(Tok::IDENT, "struct name").text;
+        if (find_struct(sn) < 0) error("unknown struct '" + sn + "'");
+        name = "struct " + sn;
+    } else if (is_type_kw(peek().type)) {
+        name = advance().text;
+    } else {
+        error("expected type");
+    }
     while (match(Tok::STAR)) name += '*';
     return name;
 }
 
-// '(' type '*'* ')'
+// '(' type ')'
 bool Parser::looks_like_cast() const {
-    if (!check(Tok::LPAREN) || !is_type_kw(peek(1).type)) return false;
-    int k = 2;
+    if (!check(Tok::LPAREN)) return false;
+    int k = 1;
+    if (peek(k).type == Tok::KW_STRUCT) {
+        if (peek(k + 1).type != Tok::IDENT) return false;
+        k += 2;
+    } else if (is_type_kw(peek(k).type)) {
+        k++;
+    } else {
+        return false;
+    }
     while (peek(k).type == Tok::STAR) k++;
     return peek(k).type == Tok::RPAREN;
+}
+
+void Parser::parse_struct_decl() {
+    advance();   // 'struct'
+    std::string name = expect(Tok::IDENT, "struct name").text;
+    if (match(Tok::SEMICOLON)) {   // forward declaration
+        if (find_struct(name) < 0) {
+            StructDef d;
+            d.name = name;
+            struct_defs().push_back(d);
+        }
+        return;
+    }
+    expect(Tok::LBRACE, "'{'");
+    int sid = find_struct(name);
+    if (sid >= 0 && struct_defs()[static_cast<size_t>(sid)].complete)
+        error("redefinition of struct '" + name + "'");
+    if (sid < 0) {
+        StructDef d;
+        d.name = name;
+        struct_defs().push_back(d);
+        sid = static_cast<int>(struct_defs().size()) - 1;
+    }
+
+    std::vector<StructField> fields;
+    int offset = 0, max_align = 1;
+    while (!check(Tok::RBRACE) && !check(Tok::END)) {
+        std::string tname = parse_type();
+        std::string fname = expect(Tok::IDENT, "member name").text;
+        if (check(Tok::LBRACKET)) error("array members are not supported");
+        expect(Tok::SEMICOLON, "';'");
+        Type ft = type_from_name(tname);
+        if (ft.is_void()) error("member '" + fname + "' cannot have type void");
+        if (ft.is_struct() && !struct_defs()[static_cast<size_t>(ft.sid)].complete)
+            error("member '" + fname + "' has incomplete type '" + type_name(ft) + "'");
+        for (const auto& f : fields)
+            if (f.name == fname) error("duplicate member '" + fname + "'");
+        int al = align_of(ft);
+        offset = (offset + al - 1) / al * al;
+        fields.push_back(StructField{fname, ft, offset});
+        offset += size_of(ft);
+        if (al > max_align) max_align = al;
+    }
+    expect(Tok::RBRACE, "'}'");
+    expect(Tok::SEMICOLON, "';'");
+    if (fields.empty()) error("struct '" + name + "' has no members");
+
+    StructDef& def = struct_defs()[static_cast<size_t>(sid)];
+    def.fields = std::move(fields);
+    def.align = max_align;
+    def.size = (offset + max_align - 1) / max_align * max_align;
+    def.complete = true;
+}
+
+// '[' (INT)? ']' ( '=' ( '{' expr (',' expr)* ','? '}' | STRING ) )?
+void Parser::parse_array_suffix(long long& length, ArrayInit& ai) {
+    expect(Tok::LBRACKET, "'['");
+    if (check(Tok::RBRACKET)) length = -1;
+    else length = expect(Tok::INT_LIT, "array size").int_val;
+    expect(Tok::RBRACKET, "']'");
+    if (match(Tok::ASSIGN)) {
+        if (match(Tok::LBRACE)) {
+            ai.has_list = true;
+            if (!check(Tok::RBRACE)) {
+                do {
+                    if (check(Tok::RBRACE)) break;
+                    ai.list.push_back(parse_assign());
+                } while (match(Tok::COMMA));
+            }
+            expect(Tok::RBRACE, "'}'");
+        } else if (check(Tok::STRING_LIT)) {
+            ai.has_str = true;
+            ai.str = advance().text;
+        } else {
+            error("array initializer must be a brace list or string literal");
+        }
+    }
 }
 
 Program Parser::parse() {
     Program p;
     while (!check(Tok::END)) {
-        p.functions.push_back(parse_function());
+        if (check(Tok::KW_STRUCT) &&
+            (peek(2).type == Tok::LBRACE || peek(2).type == Tok::SEMICOLON)) {
+            parse_struct_decl();
+            continue;
+        }
+        int line = peek().line;
+        std::string type = parse_type();
+        std::string name = expect(Tok::IDENT, "name").text;
+        if (check(Tok::LPAREN)) p.functions.push_back(parse_function_rest(type, name, line));
+        else parse_global_rest(type, name, line);
     }
     return p;
 }
 
-std::unique_ptr<FuncDecl> Parser::parse_function() {
-    auto fn = std::make_unique<FuncDecl>();
-    fn->line = peek().line;
+void Parser::parse_global_rest(const std::string& type, const std::string& name, int line) {
+    auto g = std::make_unique<GlobalDecl>();
+    g->line = line;
+    g->type = type;
+    g->name = name;
+    if (check(Tok::LBRACKET)) {
+        g->is_array = true;
+        parse_array_suffix(g->length, g->init_data);
+    } else if (match(Tok::ASSIGN)) {
+        g->init = parse_assign();
+    }
+    expect(Tok::SEMICOLON, "';'");
+    globals_.push_back(std::move(g));
+}
 
-    fn->return_type = parse_type();
-    fn->name = expect(Tok::IDENT, "function name").text;
+std::unique_ptr<FuncDecl> Parser::parse_function_rest(const std::string& ret, const std::string& name, int line) {
+    auto fn = std::make_unique<FuncDecl>();
+    fn->line = line;
+    fn->return_type = ret;
+    fn->name = name;
 
     expect(Tok::LPAREN, "'('");
     if (!check(Tok::RPAREN)) {
@@ -84,9 +235,10 @@ std::unique_ptr<Block> Parser::parse_block() {
 }
 
 StmtPtr Parser::parse_stmt() {
-    if (is_type_kw(peek().type)) return parse_var_decl();
+    if (is_type_start()) return parse_var_decl();
     if (check(Tok::KW_IF)) return parse_if();
     if (check(Tok::KW_WHILE)) return parse_while();
+    if (check(Tok::KW_DO)) return parse_do_while();
     if (check(Tok::KW_FOR)) return parse_for();
     if (check(Tok::KW_BREAK)) {
         advance();
@@ -120,15 +272,12 @@ StmtPtr Parser::parse_var_decl() {
     std::string type = parse_type();
     std::string name = expect(Tok::IDENT, "variable name").text;
 
-    if (match(Tok::LBRACKET)) {
-        const Token& len = expect(Tok::INT_LIT, "array size");
+    if (check(Tok::LBRACKET)) {
         auto a = std::make_unique<ArrayVarDecl>();
         a->line = line;
         a->type = type;
         a->name = name;
-        a->length = len.int_val;
-        expect(Tok::RBRACKET, "']'");
-        if (check(Tok::ASSIGN)) error("array initializers are not supported yet");
+        parse_array_suffix(a->length, a->init_data);
         expect(Tok::SEMICOLON, "';'");
         return a;
     }
@@ -174,6 +323,18 @@ StmtPtr Parser::parse_while() {
     return s;
 }
 
+StmtPtr Parser::parse_do_while() {
+    auto s = std::make_unique<DoWhile>();
+    s->line = advance().line;   // 'do'
+    s->body = parse_block();
+    expect(Tok::KW_WHILE, "'while'");
+    expect(Tok::LPAREN, "'('");
+    s->cond = parse_expr();
+    expect(Tok::RPAREN, "')'");
+    expect(Tok::SEMICOLON, "';'");
+    return s;
+}
+
 StmtPtr Parser::parse_for() {
     auto s = std::make_unique<For>();
     s->line = advance().line;
@@ -181,7 +342,7 @@ StmtPtr Parser::parse_for() {
 
     if (check(Tok::SEMICOLON)) {
         advance();
-    } else if (is_type_kw(peek().type)) {
+    } else if (is_type_start()) {
         s->init = parse_var_decl();
     } else {
         auto e = std::make_unique<ExprStmt>();
@@ -219,17 +380,18 @@ StmtPtr Parser::parse_return() {
 ExprPtr Parser::parse_expr() { return parse_assign(); }
 
 ExprPtr Parser::parse_assign() {
-    auto lhs = parse_or();
-    if (match(Tok::ASSIGN)) {
+    auto lhs = parse_ternary();
+    if (check(Tok::ASSIGN)) {
+        advance();
         int line = lhs->line;
         if (auto* vr = dynamic_cast<VarRef*>(lhs.get())) {
             auto a = std::make_unique<Assign>();
             a->line = line;
             a->name = vr->name;
-            a->value = parse_assign();   // right assoc
+            a->value = parse_assign();   // right associative
             return a;
         }
-        if (dynamic_cast<DerefExpr*>(lhs.get()) || dynamic_cast<IndexExpr*>(lhs.get())) {
+        if (is_lvalue(lhs.get())) {
             auto st = std::make_unique<StoreExpr>();
             st->line = line;
             st->target = std::move(lhs);
@@ -238,69 +400,48 @@ ExprPtr Parser::parse_assign() {
         }
         error("invalid assignment target");
     }
+    Tok base = Tok::PLUS;
+    if (compound_base(peek().type, base)) {
+        advance();
+        if (!is_lvalue(lhs.get())) error("invalid assignment target");
+        auto c = std::make_unique<CompoundExpr>();
+        c->line = lhs->line;
+        c->op = base;
+        c->target = std::move(lhs);
+        c->value = parse_assign();
+        return c;
+    }
     return lhs;
 }
 
-ExprPtr Parser::parse_or() {
-    auto e = parse_and();
-    while (match(Tok::OR)) {
-        auto b = std::make_unique<Binary>();
-        b->line = e->line; b->op = Tok::OR;
-        b->lhs = std::move(e); b->rhs = parse_and();
-        e = std::move(b);
-    }
-    return e;
+ExprPtr Parser::parse_ternary() {
+    auto cond = parse_binary(0);
+    if (!match(Tok::QUESTION)) return cond;
+    auto c = std::make_unique<CondExpr>();
+    c->line = cond->line;
+    c->cond = std::move(cond);
+    c->then_e = parse_expr();
+    expect(Tok::COLON, "':'");
+    c->else_e = parse_ternary();
+    return c;
 }
-ExprPtr Parser::parse_and() {
-    auto e = parse_equality();
-    while (match(Tok::AND)) {
-        auto b = std::make_unique<Binary>();
-        b->line = e->line; b->op = Tok::AND;
-        b->lhs = std::move(e); b->rhs = parse_equality();
-        e = std::move(b);
-    }
-    return e;
-}
-ExprPtr Parser::parse_equality() {
-    auto e = parse_relational();
-    while (check(Tok::EQ) || check(Tok::NE)) {
+
+ExprPtr Parser::parse_binary(size_t level) {
+    const auto& levels = binary_levels();
+    if (level >= levels.size()) return parse_unary();
+    auto e = parse_binary(level + 1);
+    while (true) {
+        bool found = false;
+        for (Tok t : levels[level]) {
+            if (check(t)) { found = true; break; }
+        }
+        if (!found) break;
         Tok op = advance().type;
         auto b = std::make_unique<Binary>();
-        b->line = e->line; b->op = op;
-        b->lhs = std::move(e); b->rhs = parse_relational();
-        e = std::move(b);
-    }
-    return e;
-}
-ExprPtr Parser::parse_relational() {
-    auto e = parse_additive();
-    while (check(Tok::LT) || check(Tok::GT) || check(Tok::LE) || check(Tok::GE)) {
-        Tok op = advance().type;
-        auto b = std::make_unique<Binary>();
-        b->line = e->line; b->op = op;
-        b->lhs = std::move(e); b->rhs = parse_additive();
-        e = std::move(b);
-    }
-    return e;
-}
-ExprPtr Parser::parse_additive() {
-    auto e = parse_multiplicative();
-    while (check(Tok::PLUS) || check(Tok::MINUS)) {
-        Tok op = advance().type;
-        auto b = std::make_unique<Binary>();
-        b->line = e->line; b->op = op;
-        b->lhs = std::move(e); b->rhs = parse_multiplicative();
-        e = std::move(b);
-    }
-    return e;
-}
-ExprPtr Parser::parse_multiplicative() {
-    auto e = parse_unary();
-    while (check(Tok::STAR) || check(Tok::SLASH) || check(Tok::PERCENT)) {
-        Tok op = advance().type;
-        auto b = std::make_unique<Binary>();
-        b->line = e->line; b->op = op;
-        b->lhs = std::move(e); b->rhs = parse_unary();
+        b->line = e->line;
+        b->op = op;
+        b->lhs = std::move(e);
+        b->rhs = parse_binary(level + 1);
         e = std::move(b);
     }
     return e;
@@ -313,6 +454,8 @@ ExprPtr Parser::parse_unary() {
         Type t = type_from_name(parse_type());
         expect(Tok::RPAREN, "')'");
         if (t.is_void()) error("sizeof(void) is not allowed");
+        if (t.is_struct() && !struct_defs()[static_cast<size_t>(t.sid)].complete)
+            error("sizeof applied to incomplete type '" + type_name(t) + "'");
         auto lit = std::make_unique<IntLit>();
         lit->line = line;
         lit->value = size_of(t);
@@ -337,6 +480,18 @@ ExprPtr Parser::parse_unary() {
         a->line = advance().line;
         a->operand = parse_unary();
         return a;
+    }
+    if (check(Tok::PLUSPLUS) || check(Tok::MINUSMINUS)) {
+        bool inc = check(Tok::PLUSPLUS);
+        int line = advance().line;
+        auto t = parse_unary();
+        if (!is_lvalue(t.get())) error("operand of '++'/'--' must be an lvalue");
+        auto id = std::make_unique<IncDecExpr>();
+        id->line = line;
+        id->inc = inc;
+        id->prefix = true;
+        id->target = std::move(t);
+        return id;
     }
     if (check(Tok::MINUS) || check(Tok::NOT) || check(Tok::TILDE)) {
         Tok op = advance().type;
@@ -371,6 +526,25 @@ ExprPtr Parser::parse_postfix() {
             ix->index = parse_expr();
             expect(Tok::RBRACKET, "']'");
             e = std::move(ix);
+        } else if (check(Tok::DOT) || check(Tok::ARROW)) {
+            bool arrow = check(Tok::ARROW);
+            advance();
+            auto m = std::make_unique<MemberExpr>();
+            m->line = e->line;
+            m->arrow = arrow;
+            m->name = expect(Tok::IDENT, "member name").text;
+            m->base = std::move(e);
+            e = std::move(m);
+        } else if (check(Tok::PLUSPLUS) || check(Tok::MINUSMINUS)) {
+            if (!is_lvalue(e.get())) error("operand of '++'/'--' must be an lvalue");
+            bool inc = check(Tok::PLUSPLUS);
+            advance();
+            auto id = std::make_unique<IncDecExpr>();
+            id->line = e->line;
+            id->inc = inc;
+            id->prefix = false;
+            id->target = std::move(e);
+            e = std::move(id);
         } else {
             break;
         }

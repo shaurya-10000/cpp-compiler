@@ -1,5 +1,6 @@
 #pragma once
 #include "ast.h"
+#include "ast_ext.h"
 #include "types.h"
 #include <string>
 #include <unordered_map>
@@ -23,13 +24,14 @@ public:
     using FuncMap = std::unordered_map<std::string, FuncInfo>;
 
     Sema();
-    void analyze(Program& program);
+    void analyze(Program& program, Globals& globals);
 
     const TypeMap& expr_types() const { return types_; }
     const FuncMap& functions() const { return functions_; }
 
 private:
     std::vector<std::unordered_map<std::string, VarInfo>> scopes_;
+    std::unordered_map<std::string, VarInfo> globals_;
     FuncMap functions_;
     TypeMap types_;
     int loop_depth_ = 0;
@@ -47,9 +49,12 @@ private:
     void check_object_type(Type t, const char* what, const std::string& name, int line);
     bool convertible(Type from, Type to, const Expr* e) const;
     void require_convertible(Type from, Type to, const Expr* e, int line);
+    void check_modifiable(Expr* target);
+    void check_array_init(ArrayInit& ai, Type elem, long long& len, int line, const std::string& name);
+    void check_global(GlobalDecl& g);
+    bool is_const_init(const Expr* e) const;
 
     void check_stmt(Stmt* s);
     Type check_expr(Expr* e);
-    Type check_binary(Binary* b);
     void check_block(Block* b);
 };
