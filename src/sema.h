@@ -29,6 +29,9 @@ public:
     const TypeMap& expr_types() const { return types_; }
     const FuncMap& functions() const { return functions_; }
 
+    // Used by the optimizer to register the type of nodes it creates.
+    void set_type(const Expr* e, Type t) { types_[e] = t; }
+
 private:
     std::vector<std::unordered_map<std::string, VarInfo>> scopes_;
     std::unordered_map<std::string, VarInfo> globals_;
