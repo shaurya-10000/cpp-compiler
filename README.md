@@ -1,9 +1,34 @@
 # minicc
 
 [![CI](https://github.com/shaurya-10000/cpp-compiler/actions/workflows/ci.yml/badge.svg)](https://github.com/shaurya-10000/cpp-compiler/actions/workflows/ci.yml)
+![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)
+![Target](https://img.shields.io/badge/target-x86--64%20Linux-lightgrey)
 
-A small C-like compiler written in C++17 that turns source files into **x86-64 Linux assembly** (AT&T syntax).
-No dependencies and no LLVM: it has its own lexer, parser, type checker, optimizer and code generator, and the output assembles with plain `gcc`.
+**A C-like compiler written from scratch in C++17.** It reads a C subset and emits x86-64 assembly that plain `gcc` can assemble and link. No LLVM, no parser generators, no dependencies: the lexer, parser, type checker, optimizer, code generator and peephole pass are all hand-written.
+
+## Highlights
+
+- **Real language features:** `int`/`char`/`bool`/`double`, pointers of any depth, arrays, `struct`, globals, recursion, more than six call arguments, `?:`, compound assignment, `++`/`--`, bitwise and shift operators.
+- **Static type checking** with implicit conversions, pointer arithmetic scaled by element size, and clear errors (`file:line:col`, source line and caret).
+- **Two-layer optimizer:** constant folding and dead-code removal on the AST, then a peephole pass over the generated assembly.
+- **Standard calling convention:** System V ABI with correct 16-byte stack alignment, so compiled functions follow the same rules as gcc's.
+- **90+ automated tests** running in CI at both `-O0` and `-O1`, so an optimizer miscompile shows up as a difference between the two runs.
+- **No libc:** output programs talk to the kernel with raw `write` syscalls.
+
+## Quick start
+
+Requires CMake 3.16+ and a C++17 compiler. Running the output needs Linux x86-64 and `gcc` (used only as assembler and linker).
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+
+./build/minicc --compile examples/list.cpp -o list.s   # or any file of your own
+gcc list.s -o list
+./list
+```
+
+A small program:
 
 ```c
 struct Node { int value; struct Node* next; };
@@ -18,23 +43,26 @@ int main() {
     struct Node a; struct Node b;
     a.value = 40; a.next = &b;
     b.value = 2;  b.next = 0;
-    print_int(sum(&a));   // 42
+    print_int(sum(&a));   // prints 42
     return 0;
 }
 ```
 
-## Build and run
+## What the optimizer does
 
-Requires CMake 3.16+ and a C++17 compiler. Running the output needs Linux x86-64 and `gcc` (used only as the assembler and linker).
+Each row below is checked by a test in `tests/asm`, which asserts the instruction is (or is not) in the generated code.
 
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+| Source | Result at `-O1` |
+|---|---|
+| `2 * 3 + 4 * 6 - 10 / 2 + 7 % 4` | `mov $28, %rax`, folded at compile time |
+| `x * 8` | `shl $3, %rax` instead of a multiply |
+| `x + 1`, `x - 1`, `x < 10` | immediate operands, no register shuffling |
+| `if (x < 10) { ... }` | one `jge`, with no `setcc` / `movzbq` / `cmp $0` in between |
+| `if (1 > 2) { ... }`, `while (0) { ... }` | removed entirely |
+| statements after `return` or `break` | removed |
+| `push %rax` / `pop %rcx` around simple operands | replaced by a register move |
 
-./build/minicc --compile prog.cpp -o prog.s
-gcc prog.s -o prog
-./prog
-```
+Run `./build/minicc --stats --compile prog.cpp > /dev/null` to see how many times each rule fired, or `bash bench/bench.sh` to compare `-O0` and `-O1` assembly size and runtime on four benchmark programs.
 
 ## Command line
 
@@ -92,21 +120,13 @@ flowchart LR
 - **Conversions:** implicit numeric conversions, `0` as the null pointer, `void*` to and from any pointer; everything else needs a cast
 - **Built-ins:** `print_int(int)`, `print_char(int)`, `print_str(char*)`, `print_double(double)`
 
-## Code generation
+## Design notes
 
-- Every value is computed in `%rax`; binary operators push the left operand and pop it into `%rcx`.
-- Arguments follow the System V ABI: six in registers, the rest on the stack, with the stack kept 16-byte aligned at every call.
-- Frames are sized exactly per function. Doubles travel as raw 64-bit patterns and are computed with SSE2 (`addsd`, `ucomisd`, ...).
-- I/O uses raw `write` syscalls, so the output does not link against libc.
-
-## Optimizer
-
-`-O1` runs two layers:
-
-1. **AST level:** constant folding with the exact runtime semantics (64-bit wraparound, arithmetic shift), identities such as `x+0`, `x*1`, `x*0`, constants moved to the right, constant `if` / `while` / `for` conditions resolved, unreachable statements and pure expression statements removed.
-2. **Assembly level (peephole):** `push` / `pop` pairs become register moves, compare + `setcc` + `test` + `jcc` fuse into one conditional jump, register operands become immediates, multiplications by powers of two become shifts, redundant store/reload pairs and dead code after `jmp` / `ret` disappear.
-
-Run `./build/minicc --stats --compile prog.cpp > /dev/null` to see the counts, or `bash bench/bench.sh` to compare `-O0` and `-O1`.
+- **Types live beside the tree, not in it.** Sema records the type of every expression in a side table, and the optimizer and code generator read it. Optimization passes that create new nodes register their types too, so the AST classes stay small.
+- **The code generator is deliberately simple.** Every value goes through `%rax`, and binary operators use push and pop. That keeps codegen easy to verify, and the peephole pass recovers most of the cost afterwards. A register allocator is the natural next step.
+- **Folding matches the machine.** Constant folding copies the runtime semantics exactly (64-bit wraparound, arithmetic right shift, masked shift counts), and never folds a division by zero, so a program that would crash still crashes.
+- **Library code is written in the language itself.** `print_double` is a minicc function in `src/prelude.h`, compiled with every program. It exercises the compiler on real code.
+- **The test suite doubles as a differential test.** The same programs run at `-O0` and `-O1`; any output difference points at an optimizer bug.
 
 ## Tests
 
@@ -121,12 +141,18 @@ ctest --test-dir build                         # runs the above
 - `tests/errors/*.cpp` must be rejected; the first line (`// ERROR: ...`) is the expected message.
 - `tests/asm/*.cpp` check that optimizations actually fire (`// ASM-HAS:`, `// ASM-NOT:`) and still print the right output.
 
-Running every program at both `-O0` and `-O1` means a miscompile by an optimization shows up as a difference.
-
 ## Limitations
 
 - Linux x86-64 only (System V ABI, raw syscalls).
 - Structs cannot be copied, passed or returned by value; use pointers. Struct members cannot be arrays.
 - No preprocessor, `#include`, `enum`, `union`, `typedef`, `switch`, `static`, function pointers or multi-dimensional arrays.
-- Doubles are passed in integer registers, so minicc code cannot call C math functions directly.
+- `int` is 64-bit, and doubles are passed in integer registers, so minicc code cannot call C math functions directly.
 - There is no standard library beyond the four built-ins.
+
+## Roadmap
+
+- [ ] `enum`, `switch`, `typedef`
+- [ ] Structs by value (copy, pass, return)
+- [ ] Preprocessor: `#include`, `#define`
+- [ ] Linking against libc (`printf`, `malloc`) with 32-bit `int` and doubles in XMM registers
+- [ ] Register allocation in place of the push/pop stack machine
