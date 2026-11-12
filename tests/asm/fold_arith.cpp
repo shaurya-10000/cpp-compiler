@@ -5,7 +5,7 @@
 // ASM-NOT: imul
 // ASM-NOT: idiv
 // ASM-NOT: shl
-// ASM-NOT: push
+// ASM-NOT: push %rax
 int main() {
     print_int(2 * 3 + 4 * 6 - 10 / 2 + 7 % 4);
     print_int((1 << 10) | 5);

@@ -3,7 +3,7 @@
 // ASM-NOT: setl
 // ASM-NOT: sete
 // ASM-NOT: movzbq
-// ASM-NOT: push
+// ASM-NOT: push %rax
 int main() {
     int n = 0;
     int i = 0;

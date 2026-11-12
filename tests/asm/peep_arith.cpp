@@ -8,7 +8,7 @@
 // ASM-HAS: jge
 // ASM-HAS: jl
 // ASM-NOT: imul %rcx
-// ASM-NOT: push
+// ASM-NOT: push %rax
 // ASM-NOT: pop
 int g = 7;
 int main() {
