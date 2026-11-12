@@ -45,7 +45,7 @@ const Token& Parser::expect(Tok t, const char* what) {
     return advance();
 }
 void Parser::error(const std::string& msg) const {
-    throw std::runtime_error("Parse error at line " + std::to_string(peek().line) +
+    throw std::runtime_error("Parse error at line " + std::to_string(peek().line) + ", col " + std::to_string(peek().col) +
                              ": " + msg + " (got '" + peek().text + "')");
 }
 

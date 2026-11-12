@@ -18,3 +18,7 @@ jobs:
         run: bash tests/run_tests.sh ./build/minicc -O0
       - name: Test suite (-O1, optimizer on)
         run: bash tests/run_tests.sh ./build/minicc -O1
+      - name: Diagnostics and CLI tests
+        run: bash tests/run_diag_tests.sh ./build/minicc
+      - name: Benchmarks (-O0 vs -O1)
+        run: bash bench/bench.sh ./build/minicc

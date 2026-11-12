@@ -18,3 +18,12 @@ endif()
 
 file(GLOB MINICC_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/*.cpp")
 add_executable(minicc ${MINICC_SOURCES})
+
+# ---- tests (run with: ctest --test-dir build) ----
+enable_testing()
+add_test(NAME suite_O0 COMMAND bash tests/run_tests.sh $<TARGET_FILE:minicc> -O0
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+add_test(NAME suite_O1 COMMAND bash tests/run_tests.sh $<TARGET_FILE:minicc> -O1
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+add_test(NAME diagnostics COMMAND bash tests/run_diag_tests.sh $<TARGET_FILE:minicc>
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
