@@ -4,6 +4,7 @@
 #include "optimizer.h"
 #include "parser.h"
 #include "peephole.h"
+#include "preprocessor.h"
 #include "prelude.h"
 #include "sema.h"
 #include <fstream>
@@ -34,6 +35,8 @@ void usage(std::ostream& os) {
           "  -o <file>       write the assembly to <file> instead of stdout (--compile only)\n"
           "  -O0 | -O1       disable / enable the optimizer (default: -O1)\n"
           "  --stats         print optimizer statistics to stderr\n"
+          "  -DNAME[=VALUE]  define a preprocessor macro (default value 1)\n"
+          "  -I<dir>         add a directory searched by #include \"...\"\n"
           "  --version       print the version and exit\n"
           "  -h, --help      show this help\n"
           "\n"
@@ -60,7 +63,8 @@ void report(const std::string& file, const std::string& src, const std::string& 
     if (std::regex_search(what, m, std::regex("col ([0-9]+)"))) col = std::stoi(m[1].str());
 
     std::string msg = what;
-    if (what.rfind("Parse error", 0) == 0 || what.rfind("Sema error line", 0) == 0) {
+    if (what.rfind("Parse error", 0) == 0 || what.rfind("Sema error line", 0) == 0 ||
+        what.rfind("Preprocess error line", 0) == 0) {
         const size_t p = what.find(": ");
         if (p != std::string::npos) msg = what.substr(p + 2);
     }
@@ -87,6 +91,19 @@ void report(const std::string& file, const std::string& src, const std::string& 
     }
 }
 
+// Errors carry a line number in the preprocessed text; map it back to the file and line it came from.
+void locate_error(const Preprocessor& pp, std::string& what, std::string& file, std::string& src) {
+    static const std::regex re("line ([0-9]+)");
+    std::smatch m;
+    if (!std::regex_search(what, m, re)) return;
+    Preprocessor::Origin o;
+    if (!pp.origin(std::stoi(m[1].str()), o)) return;
+    const std::string fixed = m.prefix().str() + "line " + std::to_string(o.line) + m.suffix().str();
+    what = fixed;
+    file = pp.file_name(o.file);
+    src = pp.file_text(o.file);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -95,6 +112,8 @@ int main(int argc, char** argv) {
     std::string outpath;
     int opt_level = 1;
     bool stats = false;
+    std::vector<std::string> defines;
+    std::vector<std::string> include_dirs;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -106,6 +125,12 @@ int main(int argc, char** argv) {
         }
         else if (a == "-O0") opt_level = 0;
         else if (a == "-O1" || a == "-O") opt_level = 1;
+        else if (a == "-I") {
+            if (i + 1 >= argc) { std::cerr << "option '-I' requires a directory\n"; return 1; }
+            include_dirs.push_back(argv[++i]);
+        }
+        else if (a.size() > 2 && a.compare(0, 2, "-I") == 0) include_dirs.push_back(a.substr(2));
+        else if (a.size() > 2 && a.compare(0, 2, "-D") == 0) defines.push_back(a.substr(2));
         else if (a == "--stats") stats = true;
         else if (a == "--compile" || a == "--dump-tokens" || a == "--dump-ast" ||
                  a == "--dump-typed" || a == "--dump-opt") mode = a;
@@ -125,8 +150,17 @@ int main(int argc, char** argv) {
     if (!f) { std::cerr << "cannot open " << filepath << "\n"; return 1; }
     std::stringstream ss; ss << f.rdbuf(); std::string src = ss.str();
 
+    Preprocessor pp;
+    for (const auto& dir : include_dirs) pp.add_include_dir(dir);
+    for (const auto& def : defines) {
+        const size_t eq = def.find('=');
+        if (eq == std::string::npos) pp.define(def, "1");
+        else pp.define(def.substr(0, eq), def.substr(eq + 1));
+    }
+
     try {
-        Lexer lex(src);
+        const std::string preprocessed = pp.run(filepath, src);
+        Lexer lex(preprocessed);
         auto toks = lex.tokenize();
 
         if (mode == "--dump-tokens") {
@@ -205,7 +239,11 @@ int main(int argc, char** argv) {
         }
         return 0;
     } catch (const std::exception& e) {
-        report(filepath, src, e.what());
+        std::string what = e.what();
+        std::string efile = filepath;
+        std::string esrc = src;
+        locate_error(pp, what, efile, esrc);
+        report(efile, esrc, what);
         return 1;
     }
 }
