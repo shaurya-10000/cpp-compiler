@@ -1,5 +1,6 @@
 #include "sema.h"
 #include "ast_ext.h"
+#include <set>
 #include <stdexcept>
 
 namespace {
@@ -289,6 +290,7 @@ void Sema::analyze(Program& program, Globals& globals) {
         current_function_ = fn->name;
         current_ret_ = type_from_name(fn->return_type);
         loop_depth_ = 0;
+        switch_depth_ = 0;
         scopes_.clear();
         push_scope();
         for (auto& p : fn->params) declare_var(p.name, type_from_name(p.type), fn->line);
@@ -359,8 +361,30 @@ void Sema::check_stmt(Stmt* s) {
         check_block(f->body.get());
         loop_depth_--;
         pop_scope();
+    } else if (auto* sw = dynamic_cast<Switch*>(s)) {
+        Type ct = check_expr(sw->cond.get());
+        require_value(ct, sw->line);
+        if (!ct.is_integral()) fail(sw->line, "switch condition must be an integer");
+        std::set<long long> seen;
+        bool has_default = false;
+        switch_depth_++;
+        push_scope();
+        for (auto& st : sw->body->stmts) {
+            if (auto* cl = dynamic_cast<CaseLabel*>(st.get())) {
+                if (cl->is_default) {
+                    if (has_default) fail(cl->line, "multiple 'default' labels in one switch");
+                    has_default = true;
+                } else if (!seen.insert(cl->value).second) {
+                    fail(cl->line, "duplicate case value " + std::to_string(cl->value));
+                }
+                continue;
+            }
+            check_stmt(st.get());
+        }
+        pop_scope();
+        switch_depth_--;
     } else if (dynamic_cast<Break*>(s) != nullptr) {
-        if (loop_depth_ == 0) fail(s->line, "'break' outside of loop");
+        if (loop_depth_ == 0 && switch_depth_ == 0) fail(s->line, "'break' outside of loop or switch");
     } else if (dynamic_cast<Continue*>(s) != nullptr) {
         if (loop_depth_ == 0) fail(s->line, "'continue' outside of loop");
     } else if (auto* blk = dynamic_cast<Block*>(s)) {

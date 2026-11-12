@@ -38,6 +38,7 @@ private:
     FuncMap functions_;
     TypeMap types_;
     int loop_depth_ = 0;
+    int switch_depth_ = 0;
     Type current_ret_ = ty::Void;
     std::string current_function_;
 

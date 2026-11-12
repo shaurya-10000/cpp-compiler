@@ -15,7 +15,9 @@ enum class Tok {
     PLUSPLUS, MINUSMINUS,
     LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET,
     COMMA, SEMICOLON, QUESTION, COLON, DOT, ARROW,
-    END
+    END,
+    // Added after v1.0.0; appended so the numeric values of existing tokens do not change.
+    KW_ENUM, KW_SWITCH, KW_CASE, KW_DEFAULT, KW_TYPEDEF
 };
 
 struct Token {

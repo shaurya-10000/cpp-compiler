@@ -78,3 +78,13 @@ struct GlobalDecl {
     ArrayInit init_data;    // array initializer
 };
 using Globals = std::vector<std::unique_ptr<GlobalDecl>>;
+
+struct Switch : Stmt {                              // switch (cond) { case K: ... default: ... }
+    ExprPtr cond;
+    std::unique_ptr<Block> body;                    // statements plus CaseLabel markers
+};
+
+struct CaseLabel : Stmt {                           // only ever a direct child of Switch::body
+    bool is_default = false;
+    long long value = 0;
+};

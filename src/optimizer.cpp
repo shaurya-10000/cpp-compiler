@@ -375,6 +375,16 @@ void Optimizer::opt_stmt(StmtPtr& s) {
         opt_block(f->body.get());
         return;
     }
+    if (auto* sw = dynamic_cast<Switch*>(p)) {
+        fold(sw->cond);
+        std::vector<StmtPtr> kept;
+        for (auto& st : sw->body->stmts) {
+            if (!dynamic_cast<CaseLabel*>(st.get())) opt_stmt(st);
+            if (st) kept.push_back(std::move(st));
+        }
+        sw->body->stmts = std::move(kept);
+        return;
+    }
     if (auto* blk = dynamic_cast<Block*>(p)) {
         opt_block(blk);
         return;

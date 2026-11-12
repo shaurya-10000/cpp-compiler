@@ -243,6 +243,19 @@ private:
         }
         if (dynamic_cast<const Break*>(s)) { indent(d); os << "Break\n"; return; }
         if (dynamic_cast<const Continue*>(s)) { indent(d); os << "Continue\n"; return; }
+        if (const auto* sw = dynamic_cast<const Switch*>(s)) {
+            indent(d);
+            os << "Switch\n";
+            expr(sw->cond.get(), d + 1);
+            block(sw->body.get(), d + 1);
+            return;
+        }
+        if (const auto* cl = dynamic_cast<const CaseLabel*>(s)) {
+            indent(d);
+            if (cl->is_default) os << "Default\n";
+            else os << "Case " << cl->value << "\n";
+            return;
+        }
         if (const auto* blk = dynamic_cast<const Block*>(s)) { block(blk, d); return; }
         indent(d);
         os << "<unknown stmt>\n";

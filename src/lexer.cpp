@@ -46,6 +46,8 @@ std::vector<Token> Lexer::tokenize() {
         {"return", Tok::KW_RETURN}, {"break", Tok::KW_BREAK},
         {"continue", Tok::KW_CONTINUE}, {"sizeof", Tok::KW_SIZEOF},
         {"struct", Tok::KW_STRUCT},
+        {"enum", Tok::KW_ENUM}, {"switch", Tok::KW_SWITCH}, {"case", Tok::KW_CASE},
+        {"default", Tok::KW_DEFAULT}, {"typedef", Tok::KW_TYPEDEF},
         {"true", Tok::KW_TRUE}, {"false", Tok::KW_FALSE},
     };
     while (true) {

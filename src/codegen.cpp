@@ -615,6 +615,36 @@ void Codegen::gen_stmt(Stmt* s) {
 
         current_break_label_ = old_break;
         current_continue_label_ = old_continue;
+    } else if (auto* sw = dynamic_cast<Switch*>(s)) {
+        const std::string end_lbl = new_label();
+        std::vector<std::string> lbls(sw->body->stmts.size());
+        std::string default_lbl;
+        gen_expr(sw->cond.get());
+        for (size_t i = 0; i < sw->body->stmts.size(); ++i) {
+            auto* cl = dynamic_cast<CaseLabel*>(sw->body->stmts[i].get());
+            if (cl == nullptr) continue;
+            lbls[i] = new_label();
+            if (cl->is_default) { default_lbl = lbls[i]; continue; }
+            // 'test' for 0 so the peephole's setcc/cmp $0 fusion can never fire on the switch value.
+            if (cl->value == 0) emit() << "  test %rax, %rax\n";
+            else if (cl->value >= -2147483648LL && cl->value <= 2147483647LL)
+                emit() << "  cmp $" << cl->value << ", %rax\n";
+            else emit() << "  movabsq $" << cl->value << ", %rcx\n  cmp %rcx, %rax\n";
+            emit() << "  je " << lbls[i] << "\n";
+        }
+        emit() << "  jmp " << (default_lbl.empty() ? end_lbl : default_lbl) << "\n";
+
+        const std::string old_break = current_break_label_;
+        current_break_label_ = end_lbl;
+        push_scope();
+        for (size_t i = 0; i < sw->body->stmts.size(); ++i) {
+            Stmt* st = sw->body->stmts[i].get();
+            if (dynamic_cast<CaseLabel*>(st) != nullptr) emit() << lbls[i] << ":\n";
+            else gen_stmt(st);
+        }
+        pop_scope();
+        current_break_label_ = old_break;
+        emit() << end_lbl << ":\n";
     } else if (auto* blk = dynamic_cast<Block*>(s)) {
         gen_block(blk);
     }
