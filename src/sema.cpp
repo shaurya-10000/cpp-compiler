@@ -134,6 +134,11 @@ void Sema::require_value(Type t, int line) {
         fail(line, "struct values cannot be copied, passed or returned; use a pointer");
 }
 
+// Like require_value, but struct values are allowed (copy, pass, return).
+void Sema::require_rvalue(Type t, int line) {
+    if (t.is_void()) fail(line, "void value used in an expression");
+}
+
 void Sema::check_object_type(Type t, const char* what, const std::string& name, int line) {
     if (t.is_void()) fail(line, std::string(what) + " '" + name + "' cannot have type void");
     if (t.is_struct() && !struct_defs()[static_cast<size_t>(t.sid)].complete)
@@ -172,10 +177,10 @@ void Sema::declare_function(FuncDecl& fn) {
 
     FuncInfo info;
     info.ret = type_from_name(fn.return_type);
-    if (info.ret.is_struct()) fail(fn.line, "functions cannot return a struct by value");
+    if (info.ret.is_struct() && !struct_defs()[static_cast<size_t>(info.ret.sid)].complete)
+        fail(fn.line, "function '" + fn.name + "' returns incomplete type '" + type_name(info.ret) + "'");
     for (auto& p : fn.params) {
         Type pt = type_from_name(p.type);
-        if (pt.is_struct()) fail(fn.line, "struct parameters must be passed by pointer");
         check_object_type(pt, "parameter", p.name, fn.line);
         info.params.push_back(pt);
     }
@@ -321,9 +326,8 @@ void Sema::check_stmt(Stmt* s) {
         Type t = type_from_name(v->type);
         check_object_type(t, "variable", v->name, v->line);
         if (v->init) {
-            if (t.is_struct()) fail(v->line, "struct initializers are not supported");
             Type it = check_expr(v->init.get());
-            require_value(it, v->line);
+            require_rvalue(it, v->line);
             require_convertible(it, t, v->init.get(), v->line);
         }
         declare_var(v->name, t, v->line);
@@ -333,7 +337,7 @@ void Sema::check_stmt(Stmt* s) {
         if (r->value) {
             Type t = check_expr(r->value.get());
             if (current_ret_.is_void()) fail(r->line, "void function should not return a value");
-            require_value(t, r->line);
+            require_rvalue(t, r->line);
             require_convertible(t, current_ret_, r->value.get(), r->line);
         } else if (!current_ret_.is_void()) {
             fail(r->line, "non-void function must return a value");
@@ -489,8 +493,8 @@ Type Sema::check_expr(Expr* e) {
         require_value(check_expr(cx->cond.get()), cx->line);
         Type a = check_expr(cx->then_e.get());
         Type b = check_expr(cx->else_e.get());
-        require_value(a, cx->line);
-        require_value(b, cx->line);
+        require_rvalue(a, cx->line);
+        require_rvalue(b, cx->line);
         return note(e, cond_type(a, b, cx->then_e.get(), cx->else_e.get(), cx->line));
     }
     if (auto* a = dynamic_cast<Assign*>(e)) {
@@ -498,14 +502,14 @@ Type Sema::check_expr(Expr* e) {
         if (vi->is_array) fail(a->line, "cannot assign to array '" + a->name + "'");
         Type target = vi->type;
         Type vt = check_expr(a->value.get());
-        require_value(vt, a->line);
+        require_rvalue(vt, a->line);
         require_convertible(vt, target, a->value.get(), a->line);
         return note(e, target);
     }
     if (auto* st = dynamic_cast<StoreExpr*>(e)) {
         Type tt = check_expr(st->target.get());
         Type vt = check_expr(st->value.get());
-        require_value(vt, st->line);
+        require_rvalue(vt, st->line);
         require_convertible(vt, tt, st->value.get(), st->line);
         return note(e, tt);
     }
@@ -539,7 +543,7 @@ Type Sema::check_expr(Expr* e) {
                              ", got " + std::to_string(call->args.size()));
         for (size_t i = 0; i < call->args.size(); ++i) {
             Type at = check_expr(call->args[i].get());
-            require_value(at, call->line);
+            require_rvalue(at, call->line);
             require_convertible(at, info.params[i], call->args[i].get(), call->line);
         }
         return note(e, info.ret);

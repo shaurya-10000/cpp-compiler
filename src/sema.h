@@ -50,6 +50,7 @@ private:
     Type note(const Expr* e, Type t) { types_[e] = t; return t; }
 
     void require_value(Type t, int line);
+    void require_rvalue(Type t, int line);
     void check_object_type(Type t, const char* what, const std::string& name, int line);
     bool convertible(Type from, Type to, const Expr* e) const;
     void require_convertible(Type from, Type to, const Expr* e, int line);

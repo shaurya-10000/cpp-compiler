@@ -34,6 +34,7 @@ private:
     int string_count_ = 0;
     std::vector<std::pair<std::string, std::string>> strings_;
     Type current_ret_ = ty::Void;
+    int ret_slot_off_ = 0;     // frame slot holding the caller's struct result-buffer address
 
     std::string current_break_label_;
     std::string current_continue_label_;
@@ -56,6 +57,7 @@ private:
     void emit_store_var(const VarSlot& s);
     void emit_load(Type elem);        // address in %rax -> value in %rax
     void emit_store(Type elem);       // address in %rdx, value in %rax
+    void emit_struct_copy(int size);  // copy struct at %rax to %rdx; result: %rdx in %rax
     void emit_load_rcx(Type elem);    // address in %rdx -> value in %rcx
     void emit_scale(const char* reg, int size);
     void emit_convert(Type from, Type to);

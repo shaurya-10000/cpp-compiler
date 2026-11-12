@@ -245,15 +245,37 @@ void Codegen::gen_function(FuncDecl& fn) {
     std::ostringstream body;
     cur_ = &body;
 
+    ret_slot_off_ = 0;
+    if (current_ret_.is_struct()) {   // the caller passes its result buffer's address in %r10
+        current_offset_ += 8;
+        ret_slot_off_ = current_offset_;
+        emit() << "  mov %r10, -" << ret_slot_off_ << "(%rbp)\n";
+    }
+
+    struct StructParam { int ptr_slot; int slot; int size; };
+    std::vector<StructParam> struct_params;
     for (size_t i = 0; i < fn.params.size(); ++i) {
-        allocate_var(fn.params[i].name, type_from_name(fn.params[i].type));
-        int off = lookup_var(fn.params[i].name).off;
+        const Type pt = type_from_name(fn.params[i].type);
+        int bytes = 8;
+        if (pt.is_struct()) bytes = ((size_of(pt) + 7) / 8) * 8;
+        allocate_var(fn.params[i].name, pt, bytes);
+        const int off = lookup_var(fn.params[i].name).off;
+        int spill = off;   // scalars are spilled straight into their slot
+        if (pt.is_struct()) {   // a struct arrives as a pointer; copy it after all args are spilled
+            current_offset_ += 8;
+            spill = current_offset_;
+            struct_params.push_back(StructParam{spill, off, size_of(pt)});
+        }
         if (i < 6) {
-            emit() << "  mov " << kArgRegs[i] << ", -" << off << "(%rbp)\n";
+            emit() << "  mov " << kArgRegs[i] << ", -" << spill << "(%rbp)\n";
         } else {
             emit() << "  mov " << (16 + 8 * (i - 6)) << "(%rbp), %rax\n";
-            emit() << "  mov %rax, -" << off << "(%rbp)\n";
+            emit() << "  mov %rax, -" << spill << "(%rbp)\n";
         }
+    }
+    for (const auto& sp : struct_params) {
+        emit() << "  mov -" << sp.ptr_slot << "(%rbp), %rsi\n  lea -" << sp.slot
+               << "(%rbp), %rdi\n  mov $" << sp.size << ", %rcx\n  rep movsb\n";
     }
 
     gen_block(fn.body.get());
@@ -278,7 +300,7 @@ void Codegen::gen_function(FuncDecl& fn) {
 
 void Codegen::emit_load_var(const VarSlot& s) {
     const std::string ref = slot_ref(s);
-    if (s.is_array) emit() << "  lea " << ref << ", %rax\n";
+    if (s.is_array || s.type.is_struct()) emit() << "  lea " << ref << ", %rax\n";
     else if (s.type == ty::Char) emit() << "  movsbq " << ref << ", %rax\n";
     else if (s.type == ty::Bool) emit() << "  movzbq " << ref << ", %rax\n";
     else emit() << "  mov " << ref << ", %rax\n";
@@ -286,11 +308,15 @@ void Codegen::emit_load_var(const VarSlot& s) {
 
 void Codegen::emit_store_var(const VarSlot& s) {
     const std::string ref = slot_ref(s);
-    if (s.type == ty::Char || s.type == ty::Bool) emit() << "  mov %al, " << ref << "\n";
+    if (s.type.is_struct() && !s.is_array) {
+        emit() << "  lea " << ref << ", %rdx\n";
+        emit_struct_copy(size_of(s.type));
+    } else if (s.type == ty::Char || s.type == ty::Bool) emit() << "  mov %al, " << ref << "\n";
     else emit() << "  mov %rax, " << ref << "\n";
 }
 
 void Codegen::emit_load(Type elem) {
+    if (elem.is_struct()) return;   // a struct value is represented by its address
     if (elem == ty::Char) emit() << "  movsbq (%rax), %rax\n";
     else if (elem == ty::Bool) emit() << "  movzbq (%rax), %rax\n";
     else emit() << "  mov (%rax), %rax\n";
@@ -303,8 +329,16 @@ void Codegen::emit_load_rcx(Type elem) {
 }
 
 void Codegen::emit_store(Type elem) {
+    if (elem.is_struct()) { emit_struct_copy(size_of(elem)); return; }
     if (elem == ty::Char || elem == ty::Bool) emit() << "  mov %al, (%rdx)\n";
     else emit() << "  mov %rax, (%rdx)\n";
+}
+
+// Struct values are represented by their address. Copies the struct at %rax (source) to the
+// address in %rdx; the result, like any struct-valued expression, is the destination address.
+void Codegen::emit_struct_copy(int size) {
+    emit() << "  mov %rax, %rsi\n  mov %rdx, %rdi\n  mov $" << size
+           << ", %rcx\n  rep movsb\n  mov %rdx, %rax\n";
 }
 
 void Codegen::emit_scale(const char* reg, int size) {
@@ -471,6 +505,8 @@ void Codegen::gen_addr(Expr* e) {
         if (m->arrow) gen_expr(m->base.get());
         else gen_addr(m->base.get());
         if (f->offset != 0) emit() << "  add $" << f->offset << ", %rax\n";
+    } else if (type_of(e).is_struct()) {
+        gen_expr(e);   // call result, assignment or ?: yielding a struct: already an address
     } else {
         throw std::runtime_error("Codegen error: expression is not addressable");
     }
@@ -530,6 +566,10 @@ void Codegen::gen_stmt(Stmt* s) {
         if (r->value) {
             gen_expr(r->value.get());
             emit_convert(type_of(r->value.get()), current_ret_);
+            if (current_ret_.is_struct()) {
+                emit() << "  mov -" << ret_slot_off_ << "(%rbp), %rdx\n";
+                emit_struct_copy(size_of(current_ret_));
+            }
         }
         emit() << "  leave\n";
         emit() << "  ret\n";
@@ -677,6 +717,10 @@ void Codegen::gen_call(Call* call) {
         push_depth_--;
     }
 
+    if (info.ret.is_struct()) {   // result buffer lives in this frame; its address goes in %r10
+        current_offset_ += ((size_of(info.ret) + 7) / 8) * 8;
+        emit() << "  lea -" << current_offset_ << "(%rbp), %r10\n";
+    }
     emit() << "  mov $0, %rax\n";
     emit() << "  call " << call->callee << "\n";
 
